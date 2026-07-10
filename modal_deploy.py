@@ -7,7 +7,6 @@ HERMES_ROOT = "/workspace/hermes-agent"
 HERMES_HOME = "/root/.hermes"
 
 GATEWAY_PORT = 8642
-DASHBOARD_PORT = 9119
 
 app = modal.App(APP_NAME)
 
@@ -27,7 +26,7 @@ hermes_secrets = [
     modal.Secret.from_name("iamhc"),
 ]
 
-# نبني Hermes وواجهة Dashboard أثناء بناء الصورة
+# صورة Hermes بدون Node.js أو بناء Dashboard
 hermes_image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install(
@@ -35,13 +34,6 @@ hermes_image = (
         "curl",
         "build-essential",
         "ca-certificates",
-    )
-    # تثبيت Node.js
-    .run_commands(
-        "curl -fsSL https://deb.nodesource.com/setup_22.x | bash -",
-        "apt-get install -y nodejs",
-        "node --version",
-        "npm --version",
     )
     .add_local_dir(
         ".",
@@ -57,9 +49,6 @@ hermes_image = (
     )
     .run_commands(
         f"pip install -e {HERMES_ROOT}",
-        f"cd {HERMES_ROOT} && npm ci",
-        f"cd {HERMES_ROOT} && npm run build --workspace web",
-        f"test -f {HERMES_ROOT}/hermes_cli/web_dist/index.html",
     )
 )
 
@@ -67,9 +56,6 @@ def build_runtime_environment() -> dict[str, str]:
     """Build the runtime environment and persist selected variables."""
     env = os.environ.copy()
     env["HERMES_HOME"] = HERMES_HOME
-    env["HERMES_DASHBOARD_PUBLIC_URL"] = (
-        "https://hoysama--hermes-api-server-dashboard.modal.run"
-    )
 
     import secrets
     if not env.get("API_SERVER_KEY") or len(env.get("API_SERVER_KEY", "")) < 16:
@@ -96,7 +82,6 @@ def build_runtime_environment() -> dict[str, str]:
             if name.startswith("MODAL_") or name in excluded_names:
                 continue
 
-            # يمنع كسر صيغة الملف إذا احتوت القيمة على سطر جديد.
             normalized_value = value.replace("\r", "\\r").replace("\n", "\\n")
             env_file.write(f"{name}={normalized_value}\n")
 
