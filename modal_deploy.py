@@ -73,6 +73,10 @@ def build_runtime_environment() -> dict[str, str]:
         "https://hoysama--hermes-api-server-dashboard.modal.run"
     )
 
+    import secrets
+    if not env.get("API_SERVER_KEY") or len(env.get("API_SERVER_KEY", "")) < 16:
+        env["API_SERVER_KEY"] = secrets.token_hex(32)
+
     os.makedirs(HERMES_HOME, exist_ok=True)
 
     env_path = os.path.join(HERMES_HOME, ".env")
@@ -131,53 +135,6 @@ def api_server():
 
     subprocess.run(
         ["hermes", "gateway", "run"],
-        env=env,
-        cwd=HERMES_ROOT,
-        check=True,
-    )
-
-
-@app.function(
-    image=hermes_image,
-    volumes={HERMES_HOME: hermes_volume},
-    secrets=hermes_secrets,
-    min_containers=1,
-    max_containers=1,
-    timeout=86400,
-)
-@modal.web_server(
-    port=DASHBOARD_PORT,
-    startup_timeout=180,
-)
-def dashboard():
-    """Run the authenticated Hermes web dashboard."""
-    import os
-    import subprocess
-    env = build_runtime_environment()
-
-    required_auth_variables = (
-        "HERMES_DASHBOARD_BASIC_AUTH_USERNAME",
-        "HERMES_DASHBOARD_BASIC_AUTH_PASSWORD",
-        "HERMES_DASHBOARD_BASIC_AUTH_SECRET",
-    )
-    missing = [name for name in required_auth_variables if not env.get(name)]
-    if missing:
-        raise RuntimeError(
-            "Dashboard authentication is not configured. "
-            "Missing variable names: " + ", ".join(missing)
-        )
-
-    subprocess.run(
-        [
-            "hermes",
-            "dashboard",
-            "--host",
-            "0.0.0.0",
-            "--port",
-            str(DASHBOARD_PORT),
-            "--no-open",
-            "--skip-build",
-        ],
         env=env,
         cwd=HERMES_ROOT,
         check=True,
