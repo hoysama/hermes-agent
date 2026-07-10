@@ -25,8 +25,6 @@ hermes_secrets = [
     modal.Secret.from_name("github-secret"),
     modal.Secret.from_name("Futureopensource"),
     modal.Secret.from_name("iamhc"),
-    # السكرت الخاص بالمصادقة للوحة التحكم
-    modal.Secret.from_name("hermes-dashboard"),
 ]
 
 # نبني Hermes وواجهة Dashboard أثناء بناء الصورة
