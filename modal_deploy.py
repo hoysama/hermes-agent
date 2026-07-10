@@ -23,6 +23,8 @@ hermes_secrets = [
     modal.Secret.from_name("cloudflare"),
     modal.Secret.from_name("codexeverywhere"),
     modal.Secret.from_name("github-secret"),
+    modal.Secret.from_name("Futureopensource"),
+    modal.Secret.from_name("iamhc"),
     # السكرت الخاص بالمصادقة للوحة التحكم
     modal.Secret.from_name("hermes-dashboard"),
 ]
@@ -64,17 +66,44 @@ hermes_image = (
 )
 
 def build_runtime_environment() -> dict[str, str]:
-    """Build the runtime environment and save secrets for subagents."""
+    """Build the runtime environment and persist selected variables."""
     env = os.environ.copy()
     env["HERMES_HOME"] = HERMES_HOME
-    
-    # حفظ المتغيرات السرية في ملف .env حتى تتمكن جميع أدوات وعملاء هرمس الفرعيين من قراءتها
+    env["HERMES_DASHBOARD_PUBLIC_URL"] = (
+        "https://hoysama--hermes-api-server-dashboard.modal.run"
+    )
+
     os.makedirs(HERMES_HOME, exist_ok=True)
-    with open(f"{HERMES_HOME}/.env", "w") as f:
-        for k, v in env.items():
-            if not k.startswith("MODAL_") and k not in ["PATH", "PWD", "HOME", "HOSTNAME", "SHLVL", "_"]:
-                f.write(f"{k}={v}\n")
-                
+
+    env_path = os.path.join(HERMES_HOME, ".env")
+    temporary_path = f"{env_path}.tmp.{os.getpid()}"
+
+    excluded_names = {
+        "PATH",
+        "PWD",
+        "HOME",
+        "HOSTNAME",
+        "SHLVL",
+        "_",
+    }
+
+    with open(temporary_path, "w", encoding="utf-8") as env_file:
+        os.chmod(temporary_path, 0o600)
+
+        for name, value in sorted(env.items()):
+            if name.startswith("MODAL_") or name in excluded_names:
+                continue
+
+            # يمنع كسر صيغة الملف إذا احتوت القيمة على سطر جديد.
+            normalized_value = value.replace("\r", "\\r").replace("\n", "\\n")
+            env_file.write(f"{name}={normalized_value}\n")
+
+        env_file.flush()
+        os.fsync(env_file.fileno())
+
+    os.replace(temporary_path, env_path)
+    os.chmod(env_path, 0o600)
+
     return env
 
 @app.function(
@@ -119,7 +148,6 @@ def api_server():
 @modal.web_server(
     port=DASHBOARD_PORT,
     startup_timeout=180,
-    requires_proxy_auth=True,
 )
 def dashboard():
     """Run the authenticated Hermes web dashboard."""
