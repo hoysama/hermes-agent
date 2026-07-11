@@ -44,6 +44,7 @@ hermes_image = (
             "node_modules",
             "web/node_modules",
             ".venv",
+            "venv",
             "__pycache__",
         ],
     )
@@ -109,6 +110,10 @@ def api_server():
     """Run the Hermes messaging gateway and API server."""
     import os
     import subprocess
+    
+    # Reload the volume to get latest config if the container was reused
+    hermes_volume.reload()
+    
     env = build_runtime_environment()
 
     env["API_SERVER_ENABLED"] = "true"

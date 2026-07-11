@@ -3866,12 +3866,28 @@ def validate_requested_model(
         }
 
     if normalized == "custom" or normalized.startswith("custom:"):
-        # Try probing with correct auth for the api_mode.
-        if api_mode == "anthropic_messages":
-            probe = probe_api_models(api_key, base_url, api_mode=api_mode)
+        from hermes_cli.config import load_config, get_compatible_custom_providers
+        try:
+            cfg = load_config()
+            custom_provs = get_compatible_custom_providers(cfg)
+            provider_config = next((p for p in custom_provs if p.get("slug") == normalized), None)
+        except Exception:
+            provider_config = None
+
+        discover = provider_config.get("discover_models", True) if provider_config else True
+
+        if discover:
+            # Try probing with correct auth for the api_mode.
+            if api_mode == "anthropic_messages":
+                probe = probe_api_models(api_key, base_url, api_mode=api_mode)
+            else:
+                probe = probe_api_models(api_key, base_url)
         else:
-            probe = probe_api_models(api_key, base_url)
+            probe = {"models": provider_config.get("models", []) if provider_config else [], "probed_url": "discovery disabled"}
+
         api_models = probe.get("models")
+        if not api_models and provider_config and provider_config.get("models"):
+            api_models = provider_config.get("models")
         if api_models is not None:
             if requested_for_lookup in set(api_models):
                 return {
