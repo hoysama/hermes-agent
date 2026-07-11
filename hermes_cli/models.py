@@ -3866,11 +3866,13 @@ def validate_requested_model(
         }
 
     if normalized == "custom" or normalized.startswith("custom:"):
+        # Check if this is a custom provider with discover_models=False
         from hermes_cli.config import load_config, get_compatible_custom_providers
         try:
             cfg = load_config()
             custom_provs = get_compatible_custom_providers(cfg)
-            provider_config = next((p for p in custom_provs if p.get("slug") == normalized), None)
+            slug_to_match = normalized[7:] if normalized.startswith("custom:") else normalized
+            provider_config = next((p for p in custom_provs if p.get("name", "").lower() == slug_to_match), None)
         except Exception:
             provider_config = None
 
@@ -3880,6 +3882,26 @@ def validate_requested_model(
             # Try probing with correct auth for the api_mode.
             if api_mode == "anthropic_messages":
                 probe = probe_api_models(api_key, base_url, api_mode=api_mode)
+                if probe is not None:
+                    if requested_for_lookup in set(probe):
+                        return {
+                            "accepted": True,
+                            "persist": True,
+                            "recognized": True,
+                            "message": None,
+                        }
+                    api_models = probe
+            elif api_mode in ("openai", "openai_chat"):
+                probe = probe_api_models(api_key, base_url, api_mode="openai")
+                if probe is not None:
+                    if requested_for_lookup in set(probe):
+                        return {
+                            "accepted": True,
+                            "persist": True,
+                            "recognized": True,
+                            "message": None,
+                        }
+                    api_models = probe
             else:
                 probe = probe_api_models(api_key, base_url)
         else:
@@ -4149,8 +4171,21 @@ def validate_requested_model(
             ),
         }
 
-    # Probe the live API to check if the model actually exists
-    api_models = fetch_api_models(api_key, base_url)
+    # Check if this is a custom provider with discover_models=False
+    from hermes_cli.config import load_config, get_compatible_custom_providers
+    try:
+        cfg = load_config()
+        custom_provs = get_compatible_custom_providers(cfg)
+        slug_to_match = normalized[7:] if normalized.startswith("custom:") else normalized
+        provider_config = next((p for p in custom_provs if p.get("name", "").lower() == slug_to_match), None)
+    except Exception:
+        provider_config = None
+
+    if provider_config and not provider_config.get("discover_models", True):
+        api_models = provider_config.get("models") or []
+    else:
+        # Probe the live API to check if the model actually exists
+        api_models = fetch_api_models(api_key, base_url)
 
     if api_models is not None:
         # Gemini's OpenAI-compat /v1beta/openai/models endpoint returns IDs
