@@ -2,7 +2,7 @@ import yaml
 import sys
 import os
 
-config_path = "/root/.hermes/config.yaml"
+config_path = "/home/hoy/.hermes/config.yaml"
 
 if not os.path.exists(config_path):
     print("No config.yaml found.")
@@ -19,7 +19,7 @@ custom_providers = [p for p in custom_providers if p.get("name") != "kintio"]
 # Add kintio
 custom_providers.append({
     "name": "kintio",
-    "base_url": "https://api.kintio.com/v1",
+    "base_url": "https://api.kintio.com",
     "api_mode": "anthropic_messages",
     "extra_headers": {
         "x-api-key": "sf_2aa126f77e6b318d4f64ee34a26ca6d927d83e9b518af8ca"
