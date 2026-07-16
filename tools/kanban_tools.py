@@ -1152,7 +1152,7 @@ KANBAN_SHOW_SCHEMA = {
             },
             "board": _board_schema_prop(),
         },
-        "required": [],
+        "required": ["board_id"],
     },
 }
 
@@ -1197,7 +1197,7 @@ KANBAN_LIST_SCHEMA = {
             },
             "board": _board_schema_prop(),
         },
-        "required": [],
+        "required": ["board_id"],
     },
 }
 
@@ -1292,7 +1292,7 @@ KANBAN_COMPLETE_SCHEMA = {
             },
             "board": _board_schema_prop(),
         },
-        "required": [],
+        "required": ["board_id"],
     },
 }
 
@@ -1364,7 +1364,7 @@ KANBAN_HEARTBEAT_SCHEMA = {
             },
             "board": _board_schema_prop(),
         },
-        "required": [],
+        "required": ["board_id"],
     },
 }
 

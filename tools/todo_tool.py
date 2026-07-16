@@ -311,7 +311,7 @@ TODO_SCHEMA = {
                 "default": False
             }
         },
-        "required": []
+        "required": ["action"],
     }
 }
 
