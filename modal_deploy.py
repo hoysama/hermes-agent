@@ -18,7 +18,6 @@ hermes_volume = modal.Volume.from_name(
 hermes_secrets = [
     modal.Secret.from_name("hermes-secrets"),
     modal.Secret.from_name("telegram"),
-    modal.Secret.from_name("Providerscloudflare"),
     modal.Secret.from_name("cloudflare"),
     modal.Secret.from_name("codexeverywhere"),
     modal.Secret.from_name("github-secret"),
