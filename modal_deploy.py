@@ -25,7 +25,7 @@ hermes_secrets = [
     modal.Secret.from_name("iamhc"),
 ]
 
-# صورة Hermes بدون Node.js أو بناء Dashboard
+# صورة Hermes المجهزة بـ Bun و Node.js و gh و wrangler
 hermes_image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install(
@@ -33,6 +33,19 @@ hermes_image = (
         "curl",
         "build-essential",
         "ca-certificates",
+        "unzip",
+        "gnupg",
+    )
+    .run_commands(
+        "curl -fsSL https://deb.nodesource.com/setup_24.x | bash -",
+        "apt-get install -y nodejs",
+        "curl -fsSL https://bun.sh/install | bash",
+        "ln -s /root/.bun/bin/bun /usr/local/bin/bun",
+        "curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg",
+        'echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null',
+        "apt-get update && apt-get install -y gh",
+        "bun add -g wrangler",
+        "ln -s /root/.bun/bin/wrangler /usr/local/bin/wrangler",
     )
     .add_local_dir(
         ".",
