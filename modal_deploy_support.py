@@ -70,7 +70,15 @@ def build_runtime_environment() -> dict[str, str]:
     env["HERMES_HOME"] = HERMES_HOME
 
     if env.get("GITHUB_TOKEN"):
-        env["GH_TOKEN"] = env["GITHUB_TOKEN"]
+        token = env["GITHUB_TOKEN"]
+        env["GH_TOKEN"] = token
+        subprocess.run(
+            ["git", "config", "--global", f"url.https://x-access-token:{token}@github.com/.insteadOf", "https://github.com/"],
+            env=env,
+            check=False,
+        )
+        subprocess.run(["git", "config", "--global", "user.name", "Hermes Agent"], env=env, check=False)
+        subprocess.run(["git", "config", "--global", "user.email", "agent@hermes.dev"], env=env, check=False)
 
     import secrets
     if not env.get("API_SERVER_KEY") or len(env.get("API_SERVER_KEY", "")) < 16:
