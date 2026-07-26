@@ -69,6 +69,9 @@ def build_runtime_environment() -> dict[str, str]:
     env = os.environ.copy()
     env["HERMES_HOME"] = HERMES_HOME
 
+    if env.get("GITHUB_TOKEN"):
+        env["GH_TOKEN"] = env["GITHUB_TOKEN"]
+
     import secrets
     if not env.get("API_SERVER_KEY") or len(env.get("API_SERVER_KEY", "")) < 16:
         env["API_SERVER_KEY"] = secrets.token_hex(32)
