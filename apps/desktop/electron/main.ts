@@ -34,9 +34,10 @@ import { stopBackendChild as stopBackendChildImpl } from './backend-child'
 import { dashboardFallbackArgs, sourceDeclaresServe } from './backend-command'
 import { createBackendConnectionState } from './backend-connection-state'
 import { buildDesktopBackendEnv, normalizeHermesHomeRoot } from './backend-env'
+import { isReauthRequiredError, waitForHermesReady } from './backend-health'
 import { canImportHermesCli, shouldTrustHermesOverride, verifyHermesCli } from './backend-probes'
 import { waitForDashboardPortAnnouncement } from './backend-ready'
-import { shouldLatchBackendStartFailure } from './backend-start-failure'
+import { shouldLatchBackendStartFailure, shouldLatchRemoteReauthFailure } from './backend-start-failure'
 import { detectRemoteDisplay, isWindowsBinaryPathInWsl, isWslEnvironment } from './bootstrap-platform'
 import { runBootstrap } from './bootstrap-runner'
 import { applyConnectionChange, resolveTerminalConnection } from './connection-apply'
@@ -118,7 +119,13 @@ import {
 } from './hardening'
 import { createLinkTitleWindow, guardLinkTitleSession, readLinkTitleWindowTitle } from './link-title-window'
 import { ensureMainWindow } from './main-window-lifecycle'
-import { oauthSessionIsLive, resolveJsonBody, resolveOauthRestAuth } from './native-auth-decisions'
+import {
+  oauthGuardMayHardFail,
+  oauthSessionIsLive,
+  resolveJsonBody,
+  resolveOauthRestAuth,
+  resolveReadinessProbeAuth
+} from './native-auth-decisions'
 import {
   nativeRefreshUrl,
   type NativeTokenSet,
@@ -1015,6 +1022,13 @@ let bootstrapFailure = null
 // Latched non-bootstrap backend spawn failure — stops getConnection() from
 // respawning hermes serve backend children in a tight loop while boot is broken.
 let backendStartFailure = null
+// Latched CONFIRMED remote reauth failure. Remote failures deliberately do not
+// latch via backendStartFailure (they're usually transient and must stay
+// retryable), but a rejected session cannot self-heal — and the non-latching
+// path actively breaks recovery: each retry re-emits running:true and hides
+// the boot-failure overlay, so the "Sign in" button flickers away before it
+// can be clicked. Cleared on every recovery path and on a confirmed sign-in.
+let remoteReauthFailure = null
 // Active first-launch install, so the renderer's Cancel button (and app quit)
 // can abort the in-flight install.sh/ps1 instead of leaving it running.
 let bootstrapAbortController = null
@@ -2772,6 +2786,11 @@ async function applyUpdates(opts = {}) {
 
     const venvBin = path.join(updateRoot, 'venv', IS_WINDOWS ? 'Scripts' : 'bin')
 
+    // ── Pre-flight state.db integrity guard (#68474) ─────────────────
+    // Emergency backup and header verification before the update touches
+    // anything.  Runs while the backend is still alive.
+    preflightStateDb(HERMES_HOME, rememberLog)
+
     // Stop our own backend(s) and wait for the venv shim to unlock BEFORE we
     // spawn the updater. Without this the updater races a still-locked
     // hermes.exe (held by the backend child / its grandchildren) and the update
@@ -2969,6 +2988,92 @@ function runningAppBundle() {
   return dir.endsWith('.app') ? dir : null
 }
 
+// ── Pre-flight state.db integrity guard (#68474) ─────────────────────
+// Take an emergency snapshot of state.db and verify the live copy is
+// intact before any update process mutates the install.  Runs in the
+// desktop Electron process itself, before the backend is killed and
+// before the updater is spawned — a separate safety net from the
+// Python-level pre-update snapshot inside `hermes update`.
+function preflightStateDb(hermesHome, rememberLog) {
+  const stateDbPath = path.join(hermesHome, 'state.db')
+
+  if (!fileExists(stateDbPath)) {
+    rememberLog('[updates] state.db pre-flight: not found (fresh install?)')
+
+    return
+  }
+
+  try {
+    const stat = fs.statSync(stateDbPath)
+
+    if (stat.size > 100) {
+      const fd = fs.openSync(stateDbPath, 'r')
+      const header = Buffer.alloc(16)
+
+      fs.readSync(fd, header, 0, 16, 0)
+      fs.closeSync(fd)
+
+      const expectedHeader = Buffer.from('SQLite format 3\0')
+      const headerOk = header.equals(expectedHeader)
+
+      rememberLog(
+        `[updates] state.db pre-flight: size=${stat.size}, ` +
+          `headerOk=${headerOk}, headerHex=${header.toString('hex')}`
+      )
+
+      if (!headerOk) {
+        rememberLog(
+          '[updates] state.db header is INVALID before update — ' +
+            'this indicates pre-existing corruption or a concurrent write issue'
+        )
+      }
+
+      // Emergency timestamped backup, separate from the Python-level snapshot.
+      const ts = new Date().toISOString().replace(/[:.]/g, '-')
+
+      const emergencyPath = path.join(hermesHome, `state.db.pre-update-emergency-${ts}.bak`)
+
+      try {
+        fs.copyFileSync(stateDbPath, emergencyPath)
+        const emergStat = fs.statSync(emergencyPath)
+
+        rememberLog(`[updates] emergency state.db backup: ${emergencyPath} ` + `(${emergStat.size} bytes)`)
+
+        // Prune to the 2 most recent emergency backups.
+        try {
+          const homeDir = fs.readdirSync(hermesHome)
+
+          const backups = homeDir
+            .filter(
+              f =>
+                f.startsWith('state.db.pre-update-emergency-') &&
+                f.endsWith('.bak') &&
+                f !== path.basename(emergencyPath)
+            )
+            .sort()
+            .reverse()
+
+          for (const old of backups.slice(2)) {
+            try {
+              fs.unlinkSync(path.join(hermesHome, old))
+            } catch {
+              void 0
+            }
+          }
+        } catch {
+          void 0
+        }
+      } catch (copyErr) {
+        rememberLog(`[updates] emergency state.db backup failed: ${copyErr.message}`)
+      }
+    } else {
+      rememberLog(`[updates] state.db too small (${stat.size} bytes) for a valid SQLite database`)
+    }
+  } catch (statErr) {
+    rememberLog(`[updates] could not stat state.db before update: ${statErr.message}`)
+  }
+}
+
 function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`
 }
@@ -2987,9 +3092,12 @@ async function applyUpdatesPosixInApp(opts: any) {
     return { ok: true, manual: true, command: 'hermes update', hermesRoot: updateRoot }
   }
 
+  // ── Pre-flight state.db integrity guard (#68474) ──
+  preflightStateDb(HERMES_HOME, rememberLog)
+
   // Put the Hermes-managed Node and the venv on PATH so `hermes desktop`'s
   // npm build can find them on a machine with no system Node. Windows portable
-  // Node lives directly under %LOCALAPPDATA%\hermes\node, not node\bin.
+  // Node lives directly under %LOCALAPPDATA%\\hermes\\node, not node\\bin.
   // PYTHONUNBUFFERED: `hermes update` writes to a pipe here, so CPython
   // block-buffers stdout and long quiet steps (the pre-update backup can zip
   // multi-GB archives for minutes) stream nothing to the progress UI — users
@@ -4720,40 +4828,88 @@ function closePreviewWatchers() {
   }
 }
 
-async function waitForHermes(baseUrl, token, signal?) {
-  const deadline = Date.now() + 45_000
-  let lastError = null
+// Best-effort read of a gateway's advertised auth providers, cached per base
+// URL for the life of the process. Used by the oauth pre-flight guard to tell
+// a password-provider gateway (which cannot satisfy the bearer/cookie checks
+// by design) from a real OAuth one. Any failure returns [] so callers keep the
+// strict guard — backends predating /api/auth/providers are unaffected.
+const gatewayAuthProvidersCache = new Map<string, any[]>()
 
-  while (Date.now() < deadline) {
-    if (signal?.aborted) {
-      const error: any = new Error('SSH bootstrap was superseded by newer connection settings.')
-      error.kind = 'superseded'
-      throw error
+async function gatewayAuthProviders(baseUrl) {
+  const cached = gatewayAuthProvidersCache.get(baseUrl)
+
+  if (cached) {
+    return cached
+  }
+
+  let providers = []
+
+  try {
+    const body = (await fetchPublicJson(`${baseUrl}/api/auth/providers`, { timeoutMs: 8_000 })) as any
+
+    if (Array.isArray(body?.providers)) {
+      providers = body.providers
+        .filter(p => p && typeof p === 'object')
+        .map(p => ({ name: String(p.name || ''), supportsPassword: Boolean(p.supports_password) }))
+        .filter(p => p.name)
     }
+  } catch {
+    // Optional metadata — an unreadable list keeps the strict guard.
+  }
 
-    try {
-      await fetchJson(`${baseUrl}/api/status`, token)
+  gatewayAuthProvidersCache.set(baseUrl, providers)
 
-      return
-    } catch (error) {
-      lastError = error
-      await new Promise((resolve, reject) => {
-        const timer = setTimeout(resolve, 500)
-        signal?.addEventListener(
-          'abort',
-          () => {
-            clearTimeout(timer)
-            const aborted: any = new Error('SSH bootstrap was superseded by newer connection settings.')
-            aborted.kind = 'superseded'
-            reject(aborted)
-          },
-          { once: true }
-        )
-      })
+  return providers
+}
+
+// Build the readiness probe for a connection's auth mode. A gated gateway
+// must be probed with the SAME credentials the rest of the connection uses:
+// an anonymous probe 401s forever against a live session, and it can never
+// see the 404 that identifies a backend predating /api/health (the auth gate
+// answers before the SPA catch-all). `probeIsCredentialed` tells
+// waitForHermesReady how to read a 401 — rejected session vs gated route.
+async function buildReadinessHealthProbe(baseUrl, authMode, token) {
+  const nativeAt = authMode === 'oauth' ? await ensureNativeAccessToken(baseUrl).catch(() => null) : null
+  const probeAuth = resolveReadinessProbeAuth(authMode, nativeAt, token)
+
+  if (probeAuth.kind === 'bearer') {
+    return {
+      // fetchJson takes the bearer via `options.bearer` — a raw `headers`
+      // option is ignored, so passing one here would silently probe
+      // uncredentialed and reintroduce the 401 loop.
+      probeHealth: (url, options: any = {}) => fetchJson(url, null, { ...options, bearer: probeAuth.token }),
+      probeIsCredentialed: true
     }
   }
 
-  throw new Error(`Hermes backend did not become ready: ${lastError?.message || 'timeout'}`)
+  if (probeAuth.kind === 'cookie') {
+    return {
+      probeHealth: (url, options: any = {}) => fetchJsonViaOauthSession(url, options),
+      probeIsCredentialed: true
+    }
+  }
+
+  if (probeAuth.kind === 'token' && probeAuth.token) {
+    return {
+      probeHealth: (url, options: any = {}) => fetchJson(url, probeAuth.token, options),
+      probeIsCredentialed: true
+    }
+  }
+
+  return { probeHealth: fetchPublicJson, probeIsCredentialed: false }
+}
+
+async function waitForHermes(baseUrl, token, signal?, authMode?) {
+  const { probeHealth, probeIsCredentialed } = await buildReadinessHealthProbe(baseUrl, authMode, token)
+
+  return waitForHermesReady(baseUrl, {
+    token,
+    signal,
+    fetchPublicJson,
+    fetchJson: probeIsCredentialed ? (url, _token, options) => probeHealth(url, options) : fetchJson,
+    probeHealth,
+    probeIsCredentialed
+  })
 }
 
 function getWindowButtonPosition() {
@@ -6754,7 +6910,10 @@ async function buildRemoteConnection(
     // here would reject a freshly-completed native sign-in and loop the UI back
     // into "not signed in" even though mintGatewayWsTicket would succeed with
     // the stored bearer.
-    if (!oauthSessionIsLive(hasNativeSession(baseUrl), await hasLiveOauthSession(baseUrl))) {
+    if (
+      !oauthSessionIsLive(hasNativeSession(baseUrl), await hasLiveOauthSession(baseUrl)) &&
+      oauthGuardMayHardFail(await gatewayAuthProviders(baseUrl))
+    ) {
       const err = new Error(
         'Remote Hermes gateway uses OAuth, but you are not signed in. ' +
           'Open Settings → Gateway and click "Sign in", or switch back to Local.'
@@ -6995,7 +7154,7 @@ async function bootstrapSshConnectionInner(profile, sshConfig, reuseToken, sourc
       forward: (localPort, remotePort) => ssh.forward(localPort, remotePort),
       cancelForward: (localPort, remotePort) => ssh.cancelForward(localPort, remotePort),
       pickLocalPort,
-      waitForHermes: (baseUrl, token) => waitForHermes(baseUrl, token, lease.signal),
+      waitForHermes: (baseUrl, token) => waitForHermes(baseUrl, token, lease.signal, 'token'),
       probeReuseProof: sshProbeReuseProof,
       adoptServedToken: adoptServedDashboardToken,
       rememberLog: sshRememberLog,
@@ -7468,6 +7627,7 @@ function stopBackendChild(child) {
 // switch / crash recovery), which still resets boot progress + reloads.
 function resetHermesConnection({ soft = false } = {}) {
   backendStartFailure = null
+  remoteReauthFailure = null
   remoteLiveness.clear()
   const hermesProcess = backendConnectionState.invalidate()
   stopBackendChild(hermesProcess)
@@ -7668,7 +7828,7 @@ async function spawnPoolBackend(profile, entry) {
   const remote = await resolveRemoteBackend(profile)
 
   if (remote) {
-    await waitForHermes(remote.baseUrl, remote.token)
+    await waitForHermes(remote.baseUrl, remote.token, undefined, remote.authMode)
 
     return {
       ...remote,
@@ -7860,6 +8020,13 @@ async function startHermes() {
     throw backendStartFailure
   }
 
+  // A confirmed remote reauth rejection is terminal until the user signs in.
+  // Short-circuiting here keeps the boot-failure overlay latched and its
+  // "Sign in" button clickable, instead of re-driving boot on every retry.
+  if (remoteReauthFailure) {
+    throw remoteReauthFailure
+  }
+
   // E2E: simulate a boot failure without breaking the real backend. The boot
   // progresses a few steps, then fails with the given error message.
   if (BOOT_FAKE_ERROR) {
@@ -7886,7 +8053,7 @@ async function startHermes() {
   const connectionPromise = (async () => {
     const connectRemote = async remote => {
       await advanceBootProgress('backend.remote', `Connecting to remote Hermes backend at ${remote.baseUrl}`, 24)
-      await waitForHermes(remote.baseUrl, remote.token)
+      await waitForHermes(remote.baseUrl, remote.token, undefined, remote.authMode)
       updateBootProgress({
         phase: 'backend.ready',
         message: 'Remote Hermes backend is ready',
@@ -8121,6 +8288,12 @@ async function startHermes() {
     // "Sign out & sign in" reload, and the wake-recovery revalidate path.
     if (shouldLatchBackendStartFailure({ attemptedRemote })) {
       backendStartFailure = error instanceof Error ? error : new Error(message)
+    }
+
+    // A confirmed reauth rejection latches separately: it can't self-heal, and
+    // leaving it unlatched hides the overlay's "Sign in" button on every retry.
+    if (shouldLatchRemoteReauthFailure({ attemptedRemote, isReauth: isReauthRequiredError(error) })) {
+      remoteReauthFailure = error instanceof Error ? error : new Error(message)
     }
 
     updateBootProgress(
@@ -8926,6 +9099,7 @@ ipcMain.handle('hermes:bootstrap:reset', async () => {
   await teardownPrimaryBackendAndWait()
   bootstrapFailure = null
   backendStartFailure = null
+  remoteReauthFailure = null
   getFirstRunSetupGate().resetForRetry()
   resetBootstrapSnapshot()
 
@@ -8948,6 +9122,7 @@ ipcMain.handle('hermes:bootstrap:repair', async () => {
 
   bootstrapFailure = null
   backendStartFailure = null
+  remoteReauthFailure = null
   getFirstRunSetupGate().resetForRepair()
   resetHermesConnection()
 
@@ -9057,6 +9232,9 @@ ipcMain.handle('hermes:connection-config:oauth-login', async (_event, rawUrl) =>
       })
 
       _storeNativeTokens(baseUrl, tokens)
+      // Confirmed sign-in — release the reauth latch so the next
+      // startHermes() re-dials instead of replaying the stale rejection.
+      remoteReauthFailure = null
 
       return { ok: true, baseUrl, connected: true }
     } catch (error) {
@@ -9073,7 +9251,16 @@ ipcMain.handle('hermes:connection-config:oauth-login', async (_event, rawUrl) =>
   // Legacy embedded-webview cookie flow.
   await openOauthLoginWindow(baseUrl)
 
-  return { ok: true, baseUrl, connected: await hasOauthSessionCookie(baseUrl) }
+  const connected = await hasOauthSessionCookie(baseUrl)
+
+  // Only a CONFIRMED sign-in releases the latch. A cancelled/closed login
+  // window must leave it set, or the overlay's "Sign in" button starts
+  // flickering again on the next retry.
+  if (connected) {
+    remoteReauthFailure = null
+  }
+
+  return { ok: true, baseUrl, connected }
 })
 ipcMain.handle('hermes:connection-config:oauth-logout', async (_event, rawUrl) => {
   const baseUrl = rawUrl ? normalizeRemoteBaseUrl(rawUrl) : ''
