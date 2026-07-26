@@ -20,7 +20,7 @@ hermes_secrets = [
     modal.Secret.from_name("cloudflare"),
     modal.Secret.from_name("codexeverywhere"),
     modal.Secret.from_name("github-secret"),
-    modal.Secret.from_name("Futureopensource"),
+    modal.Secret.from_name("OPENROUTER"),
     modal.Secret.from_name("iamhc"),
 ]
 
