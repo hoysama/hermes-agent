@@ -403,10 +403,8 @@ def restore_official_optional_skill(name: str, *, restore: bool = False) -> dict
 
 
 def _find_installed_skill_dir_by_name(skill_dir_name: str) -> Optional[Path]:
-    """Locate an installed skill directory by its directory name.
+    """Find a skill directory under SKILLS_DIR matching a given directory name.
 
-    Used only as a fallback when the repo-derived install path doesn't exist in
-    the active tree (upstream recategorized the skill after it was installed).
     Returns None when there is no match, or when the name is AMBIGUOUS — two
     skills sharing a directory name give us no basis to pick one, and guessing
     would write provenance onto the wrong skill. The caller still verifies a
@@ -415,7 +413,7 @@ def _find_installed_skill_dir_by_name(skill_dir_name: str) -> Optional[Path]:
     if not skill_dir_name or not SKILLS_DIR.exists():
         return None
     matches: List[Path] = []
-    for skill_md in SKILLS_DIR.rglob("SKILL.md"):
+    for skill_md in _safe_rglob_skill_md(SKILLS_DIR):
         if is_excluded_skill_path(skill_md):
             continue
         candidate = skill_md.parent
