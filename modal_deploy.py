@@ -69,6 +69,8 @@ def build_runtime_environment() -> dict[str, str]:
     """Build the runtime environment and persist selected variables."""
     env = os.environ.copy()
     env["HERMES_HOME"] = HERMES_HOME
+    env["HERMES_AGENT_TIMEOUT_WARNING"] = "3600"  # 1 hour (3600s)
+    env["HERMES_AGENT_TIMEOUT"] = "7200"          # 2 hours (7200s)
 
     if env.get("GITHUB_TOKEN"):
         token = env["GITHUB_TOKEN"]
