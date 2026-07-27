@@ -69,6 +69,7 @@ def build_runtime_environment() -> dict[str, str]:
     """Build the runtime environment and persist selected variables."""
     env = os.environ.copy()
     env["HERMES_HOME"] = HERMES_HOME
+    env["TERMINAL_CWD"] = f"{HERMES_HOME}/workspaces"
     env["HERMES_AGENT_TIMEOUT_WARNING"] = "3600"  # 1 hour (3600s)
     env["HERMES_AGENT_TIMEOUT"] = "7200"          # 2 hours (7200s)
 
@@ -88,6 +89,7 @@ def build_runtime_environment() -> dict[str, str]:
         env["API_SERVER_KEY"] = secrets.token_hex(32)
 
     os.makedirs(HERMES_HOME, exist_ok=True)
+    os.makedirs(os.path.join(HERMES_HOME, "workspaces"), exist_ok=True)
 
     env_path = os.path.join(HERMES_HOME, ".env")
     temporary_path = f"{env_path}.tmp.{os.getpid()}"

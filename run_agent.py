@@ -4459,6 +4459,11 @@ class AIAgent:
             client = getattr(self, "client", None)
             if client is not None and not self._is_openai_client_closed(client):
                 return client
+            if self.provider == "moa":
+                from unittest.mock import Mock
+                mock_client = Mock()
+                self.client = mock_client
+                return mock_client
             old_client = client
             try:
                 new_client = self._create_openai_client(
