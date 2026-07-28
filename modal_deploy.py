@@ -23,6 +23,7 @@ hermes_secrets = [
     modal.Secret.from_name("github-secret"),
     modal.Secret.from_name("OPENROUTER"),
     modal.Secret.from_name("iamhc"),
+    modal.Secret.from_name("google"),
 ]
 
 # صورة Hermes المجهزة بـ Bun و Node.js و gh و wrangler
