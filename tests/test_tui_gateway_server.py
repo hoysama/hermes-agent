@@ -1998,7 +1998,14 @@ def test_load_enabled_toolsets_rejects_disabled_mcp_env(monkeypatch, capsys):
     # Sorted: ["kanban", "memory", "project"]. `kanban` is auto-recovered by
     # _get_platform_tools (a non-configurable platform toolset in hermes-cli's
     # universe); `project` is GUI-only, folded in by _load_enabled_toolsets.
-    assert server._load_enabled_toolsets() == ["kanban", "memory", "project"]
+    # Toolsets inside their first release (_RECENTLY_SHIPPED_TOOLSETS) are
+    # back-filled onto saved lists that never offered them — allow those too.
+    from hermes_cli.tools_config import _RECENTLY_SHIPPED_TOOLSETS
+
+    result = server._load_enabled_toolsets()
+    assert result is not None
+    assert {"kanban", "memory", "project"} <= set(result)
+    assert set(result) - {"kanban", "memory", "project"} <= _RECENTLY_SHIPPED_TOOLSETS
     err = capsys.readouterr().err
     assert "ignoring disabled MCP servers" in err
     assert "mcp-off" in err
@@ -2019,7 +2026,12 @@ def test_load_enabled_toolsets_falls_back_when_tui_env_invalid(monkeypatch, caps
         config_mod, "load_config", lambda: {"platform_toolsets": {"cli": ["memory"]}}
     )
 
-    assert server._load_enabled_toolsets() == ["kanban", "memory", "project"]
+    from hermes_cli.tools_config import _RECENTLY_SHIPPED_TOOLSETS
+
+    result = server._load_enabled_toolsets()
+    assert result is not None
+    assert {"kanban", "memory", "project"} <= set(result)
+    assert set(result) - {"kanban", "memory", "project"} <= _RECENTLY_SHIPPED_TOOLSETS
     assert "using configured CLI toolsets" in capsys.readouterr().err
 
 
@@ -8437,6 +8449,30 @@ def test_session_info_includes_session_title(monkeypatch):
     )
 
     assert info["title"] == "Dashboard title"
+
+
+def test_session_info_reports_pending_model_switch(monkeypatch):
+    """A model queued mid-turn shows as the session's model in session.info, so
+    the end-of-turn settle doesn't blip the UI back to the still-live old model
+    before the switch applies at the next turn start."""
+    agent = types.SimpleNamespace(tools=[], model="old/model", provider="openai")
+    session = {
+        "session_key": "",
+        "history": [],
+        "pending_model_switch": {
+            "raw": "new/model --provider anthropic",
+            "display_model": "new/model",
+            "display_provider": "anthropic",
+        },
+    }
+
+    info = server._session_info(agent, session)
+    assert info["model"] == "new/model"
+    assert info["provider"] == "anthropic"
+
+    # With nothing queued the live agent model wins, as before.
+    session.pop("pending_model_switch")
+    assert server._session_info(agent, session)["model"] == "old/model"
 
 
 # ---------------------------------------------------------------------------
