@@ -16,13 +16,13 @@ hermes_volume = modal.Volume.from_name(
 )
 
 hermes_secrets = [
-    modal.Secret.from_name("nabeh-agent"),
     modal.Secret.from_name("hermes-secrets"),
     modal.Secret.from_name("cloudflare"),
     modal.Secret.from_name("codexeverywhere"),
     modal.Secret.from_name("github-secret"),
     modal.Secret.from_name("OPENROUTER"),
     modal.Secret.from_name("iamhc"),
+    modal.Secret.from_name("nabeh-agent"),
 ]
 
 hermes_image = (
