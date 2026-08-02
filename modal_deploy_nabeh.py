@@ -144,7 +144,8 @@ def api_server():
     env["API_SERVER_ENABLED"] = "true"
     env["API_SERVER_PORT"] = str(GATEWAY_PORT)
     env["API_SERVER_HOST"] = "0.0.0.0"
-    env.setdefault("TELEGRAM_ALLOWED_USERS", "*")
+    env["TELEGRAM_ALLOWED_USERS"] = "7839527436"
+    env["TELEGRAM_REQUIRE_MENTION"] = "false"
 
     subprocess.run(
         ["hermes", "-p", "nabeh", "gateway", "run"],
