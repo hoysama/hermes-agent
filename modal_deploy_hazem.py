@@ -2,7 +2,7 @@ import os
 import subprocess
 import modal
 
-APP_NAME = "hermes-nabeh-api-server"
+APP_NAME = "hermes-hazem-api-server"
 HERMES_ROOT = "/workspace/hermes-agent"
 HERMES_HOME = "/root/.hermes"
 
@@ -133,7 +133,7 @@ def build_runtime_environment() -> dict[str, str]:
     startup_timeout=120,
 )
 def api_server():
-    """Run the Hermes messaging gateway and API server for Nabeh Agent."""
+    """Run the Hermes messaging gateway and API server for Hazem Agent."""
     import os
     import subprocess
     
@@ -148,7 +148,7 @@ def api_server():
     env["TELEGRAM_REQUIRE_MENTION"] = "false"
 
     subprocess.run(
-        ["hermes", "-p", "nabeh", "gateway", "run"],
+        ["hermes", "-p", "hazem", "gateway", "run"],
         env=env,
         cwd=HERMES_ROOT,
         check=True,

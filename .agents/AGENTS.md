@@ -6,5 +6,5 @@ When adding or removing an inference provider for Hermes:
 2. **Re-deploy All 3 Hermes Applications**: After editing `~/.hermes/config.yaml`, deploy all three Hermes instances to Modal in order:
    - **Hermes Personal**: `modal deploy modal_deploy.py` #this is personal-hermes for the user as assistant for the user
    - **Hermes Support**: `modal deploy modal_deploy_support.py`
-   - **Hermes Nabeh**: `modal deploy modal_deploy_nabeh.py`
+   - **Hermes Hazem**: `modal deploy modal_deploy_hazem.py`
 3. **Verify Provider Registration**: Ensure the new provider appears in the list of available providers by running `hermes providers list` or checking the Modal dashboard.
