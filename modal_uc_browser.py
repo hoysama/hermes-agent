@@ -40,6 +40,11 @@ sb_image = (
 )
 @modal.fastapi_endpoint(method="POST")
 async def extract(data: dict):
+    """
+    Extract content from any URL using SeleniumBase UC Mode (Undetected Driver).
+    
+    Payload: {"url": "https://example.com"}
+    """
     from seleniumbase import Driver
     
     target_url = data.get("url", "https://fikra-app.pages.dev")
@@ -56,7 +61,6 @@ async def extract(data: dict):
         title = driver.get_title()
         page_source = driver.get_page_source()
         
-        # Take screenshot or check elements
         return {
             "status": "success",
             "url": target_url,
