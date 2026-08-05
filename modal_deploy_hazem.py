@@ -23,6 +23,8 @@ hermes_secrets = [
     modal.Secret.from_name("OPENROUTER"),
     modal.Secret.from_name("iamhc"),
     modal.Secret.from_name("nabeh-agent"),
+    modal.Secret.from_name("modal_proxy_tokens"),
+    modal.Secret.from_name("searxng"),
 ]
 
 hermes_image = (
