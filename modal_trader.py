@@ -170,13 +170,15 @@ def _ensure_trader_files():
     os.makedirs("/data/hermes_trader/strategies", exist_ok=True)
     os.makedirs("/data/hermes_trader/user_data", exist_ok=True)
 
-    if not os.path.exists(CONFIG_PATH):
+    if not os.path.exists(CONFIG_PATH) or os.path.getsize(CONFIG_PATH) == 0:
         with open(CONFIG_PATH, "w") as f:
             f.write(DEFAULT_CONFIG_JSON)
+        storage_vol.commit()
 
-    if not os.path.exists(STRATEGY_PATH):
+    if not os.path.exists(STRATEGY_PATH) or os.path.getsize(STRATEGY_PATH) == 0:
         with open(STRATEGY_PATH, "w") as f:
             f.write(DEFAULT_STRATEGY_PY)
+        storage_vol.commit()
 
 
 @app.function(
@@ -190,8 +192,8 @@ def _ensure_trader_files():
 @modal.fastapi_endpoint(method="GET")
 def status() -> Dict[str, Any]:
     """Returns the current trading status and open positions."""
-    _ensure_trader_files()
     storage_vol.reload()
+    _ensure_trader_files()
 
     # Query internal Freqtrade API server if running, or read state
     api_url = "http://127.0.0.1:8080/api/v1/status"
@@ -203,8 +205,15 @@ def status() -> Dict[str, Any]:
         pass
 
     # Read config to get static summary if process is inactive
-    with open(CONFIG_PATH, "r") as f:
-        cfg = json.load(f)
+    cfg = {}
+    if os.path.exists(CONFIG_PATH):
+        try:
+            with open(CONFIG_PATH, "r") as f:
+                cfg = json.load(f)
+        except Exception:
+            cfg = json.loads(DEFAULT_CONFIG_JSON)
+    else:
+        cfg = json.loads(DEFAULT_CONFIG_JSON)
 
     return {
         "status": "configured",
