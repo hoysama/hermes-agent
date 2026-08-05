@@ -7,10 +7,12 @@ When adding or removing an inference provider for Hermes:
    `modal volume put hermes-storage ~/.hermes/config.yaml /config.yaml --force`
    `modal volume put hermes-storage ~/.hermes/config.yaml /profiles/hazem/config.yaml --force`
    `modal volume put hermes-storage ~/.hermes/config.yaml /profiles/projectsentinelsupport/config.yaml --force`
-3. **Re-deploy All 3 Hermes Applications**: Deploy all three Hermes instances to Modal in order:
+   `modal volume put hermes-storage ~/.hermes/config.yaml /profiles/trader/config.yaml --force`
+3. **Re-deploy All 4 Hermes Applications**: Deploy all four Hermes instances to Modal in order:
    - **Hermes Personal**: `modal deploy modal_deploy.py` # personal assistant for the user
    - **Hermes Support**: `modal deploy modal_deploy_support.py`
    - **Hermes Hazem**: `modal deploy modal_deploy_hazem.py`
+   - **Hermes Trader**: `modal deploy modal_deploy_trader.py` # dedicated crypto trader bot
 4. **Verify Provider Registration**: Ensure the new provider appears in the list of available providers by running `hermes providers list` or checking the Modal dashboard.
 
 ---
@@ -38,6 +40,10 @@ When registering custom tools in `tools/*.py`:
 
 ### 2. Deployed Modal Auxiliary Microservices
 Hermes connects to dedicated Modal microservices to offload heavy workloads:
+- **`hermes-trader`** (`modal_trader.py`):
+  - Tool: `trader_status` (`tools/trader_tool.py`)
+  - Endpoint: `https://hoysama--hermes-trader-status.modal.run`
+  - Engine: Freqtrade Binance/OKX Spot Quantitative Trading Engine (Dry-Run & Live Trading, 10% max stake per trade, Sharia-compliant whitelist).
 - **`hermes-whisper`** (`modal_whisper.py`):
   - Tool: `audio_transcribe` (`tools/audio_transcribe_tool.py`) & Gateway Auto-STT Provider (`stt.provider: modal` in `tools/transcription_tools.py`)
   - Endpoint: `https://hoysama--hermes-whisper-transcribe.modal.run`
@@ -66,18 +72,20 @@ Hermes connects to dedicated Modal microservices to offload heavy workloads:
 
 ### 3. Microservice Update & Deployment Workflow
 When modifying any tool or backend microservice:
-1. Deploy the specific microservice (e.g. `modal deploy modal_whisper.py` or `modal deploy modal_searxng.py`).
+1. Deploy the specific microservice (e.g. `modal deploy modal_whisper.py`, `modal deploy modal_searxng.py`, or `modal deploy modal_trader.py`).
 2. Verify the tool implementation in `tools/*.py` complies with `registry.register(handler=..., schema=...)`.
 3. Sync `config.yaml` and `.env` to Modal volume profiles:
    `modal volume put hermes-storage ~/.hermes/config.yaml /config.yaml --force`
    `modal volume put hermes-storage ~/.hermes/config.yaml /profiles/hazem/config.yaml --force`
    `modal volume put hermes-storage ~/.hermes/config.yaml /profiles/projectsentinelsupport/config.yaml --force`
+   `modal volume put hermes-storage ~/.hermes/config.yaml /profiles/trader/config.yaml --force`
    `modal volume put hermes-storage ~/.hermes/.env /.env --force`
    `modal volume put hermes-storage ~/.hermes/.env /profiles/hazem/.env --force`
    `modal volume put hermes-storage ~/.hermes/.env /profiles/projectsentinelsupport/.env --force`
-4. Redeploy the 3 main Hermes instances (`modal_deploy.py`, `modal_deploy_support.py`, `modal_deploy_hazem.py`) so the updated tool definitions and configs take effect in active gateway sessions.
+   `modal volume put hermes-storage ~/.hermes/.env /profiles/trader/.env --force`
+4. Redeploy all 4 main Hermes instances (`modal_deploy.py`, `modal_deploy_support.py`, `modal_deploy_hazem.py`, `modal_deploy_trader.py`) so the updated tool definitions and configs take effect in active gateway sessions.
 
 ### 4. Modal Proxy Auth Security & Secrets Management
 - **Proxy Token Authorization**: All auxiliary microservices are secured with `requires_proxy_auth=True`. Tools in `tools/` and `plugins/` must send `get_modal_auth_headers()` from `tools/tool_backend_helpers.py`.
-- **Runtime Environment Filter (`build_runtime_environment`)**: Deployment scripts (`modal_deploy.py`, `modal_deploy_hazem.py`, `modal_deploy_support.py`) explicitly preserve `MODAL_PROXY_TOKEN_*` environment variables when generating `$HERMES_HOME/.env`.
-- **Modal Secrets Binding**: Cloud secrets (`modal_proxy_tokens`, `searxng`) are listed in `hermes_secrets` across deployment scripts for automated cloud secret injection.
+- **Runtime Environment Filter (`build_runtime_environment`)**: Deployment scripts (`modal_deploy.py`, `modal_deploy_hazem.py`, `modal_deploy_support.py`, `modal_deploy_trader.py`) explicitly preserve `MODAL_PROXY_TOKEN_*` environment variables when generating `$HERMES_HOME/.env`.
+- **Modal Secrets Binding**: Cloud secrets (`hermes_trader`, `modal_proxy_tokens`, `searxng`) are listed in `hermes_secrets` across deployment scripts for automated cloud secret injection.
