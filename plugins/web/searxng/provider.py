@@ -79,12 +79,17 @@ class SearXNGWebSearchProvider(WebSearchProvider):
             "pageno": 1,
         }
 
+        from tools.tool_backend_helpers import get_modal_auth_headers
+
+        headers = {"Accept": "application/json"}
+        headers.update(get_modal_auth_headers())
+
         try:
             resp = httpx.get(
                 f"{base_url}/search",
                 params=params,
                 timeout=15,
-                headers={"Accept": "application/json"},
+                headers=headers,
             )
             resp.raise_for_status()
         except httpx.HTTPStatusError as exc:

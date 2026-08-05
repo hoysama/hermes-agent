@@ -66,12 +66,17 @@ class Crawl4AIWebSearchProvider(WebSearchProvider):
                 "error": "URL blocked by SSRF policy",
             }
 
+        from tools.tool_backend_helpers import get_modal_auth_headers
+
+        headers = {"Content-Type": "application/json"}
+        headers.update(get_modal_auth_headers())
+
         # Try Primary Extractor: Crawl4AI
         try:
             resp = await client.post(
                 endpoint,
                 json={"url": url},
-                headers={"Content-Type": "application/json"},
+                headers=headers,
             )
             if resp.status_code == 200:
                 data = resp.json()
@@ -94,7 +99,7 @@ class Crawl4AIWebSearchProvider(WebSearchProvider):
             resp = await client.post(
                 uc_endpoint,
                 json={"url": url},
-                headers={"Content-Type": "application/json"},
+                headers=headers,
                 timeout=60.0,
             )
             if resp.status_code == 200:
