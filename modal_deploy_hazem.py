@@ -106,7 +106,7 @@ def build_runtime_environment() -> dict[str, str]:
         os.chmod(temporary_path, 0o600)
 
         for name, value in sorted(env.items()):
-            if name.startswith("MODAL_") or name in excluded_names:
+            if (name.startswith("MODAL_") and not name.startswith("MODAL_PROXY_TOKEN_")) or name in excluded_names:
                 continue
 
             normalized_value = value.replace("\r", "\\r").replace("\n", "\\n")
