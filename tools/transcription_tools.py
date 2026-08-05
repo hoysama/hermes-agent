@@ -122,6 +122,7 @@ OPENAI_BASE_URL = os.getenv("STT_OPENAI_BASE_URL", "https://api.openai.com/v1")
 XAI_STT_BASE_URL = os.getenv("XAI_STT_BASE_URL", "https://api.x.ai/v1")
 ELEVENLABS_STT_BASE_URL = os.getenv("ELEVENLABS_STT_BASE_URL", "https://api.elevenlabs.io/v1")
 # DeepInfra STT base URL now resolved via hermes_cli.models.deepinfra_base_url (shared).
+MODAL_WHISPER_URL = os.getenv("MODAL_WHISPER_URL", "https://hoysama--hermes-whisper-transcribe.modal.run")
 
 SUPPORTED_FORMATS = {".mp3", ".mp4", ".mpeg", ".mpga", ".m4a", ".wav", ".webm", ".ogg", ".oga", ".opus", ".aac", ".flac", ".caf"}
 LOCAL_NATIVE_AUDIO_FORMATS = {".wav", ".aiff", ".aif"}
@@ -347,6 +348,7 @@ BUILTIN_STT_PROVIDERS = frozenset({
     "xai",
     "elevenlabs",
     "deepinfra",
+    "modal",
 })
 
 
@@ -1057,6 +1059,9 @@ def _get_provider(stt_config: dict) -> str:
                 "(or openai package missing)"
             )
             return "none"
+
+        if provider == "modal":
+            return "modal"  # No API key needed — our own Modal endpoint
 
         return provider  # Unknown — let it fail downstream
 
@@ -2347,8 +2352,81 @@ def _transcribe_deepinfra(file_path: str, model_name: str) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Modal Whisper GPU provider
+# ---------------------------------------------------------------------------
+
+
+def _transcribe_modal(
+    file_path: str,
+    language: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Transcribe via the Modal Whisper GPU microservice (Faster-Whisper large-v3).
+
+    Sends the audio as base64-encoded bytes to the ``hermes-whisper`` Modal
+    endpoint.  No API key required — this is our own service.
+    """
+    import base64
+    import json
+
+    try:
+        import requests as _requests
+    except ImportError:
+        return {
+            "success": False,
+            "transcript": "",
+            "error": "requests package is required for Modal STT provider.",
+        }
+
+    try:
+        with open(file_path, "rb") as f:
+            audio_b64 = base64.b64encode(f.read()).decode("ascii")
+    except OSError as exc:
+        return {"success": False, "transcript": "", "error": f"Cannot read audio file: {exc}"}
+
+    payload: Dict[str, Any] = {
+        "audio_url": "",
+        "audio_b64": audio_b64,
+        "task": "transcribe",
+    }
+    if language:
+        payload["language"] = language
+
+    try:
+        resp = _requests.post(MODAL_WHISPER_URL, json=payload, timeout=120)
+        if resp.status_code != 200:
+            return {
+                "success": False,
+                "transcript": "",
+                "error": f"Modal Whisper returned HTTP {resp.status_code}: {resp.text[:200]}",
+            }
+        data = resp.json()
+        if data.get("status") == "error":
+            return {
+                "success": False,
+                "transcript": "",
+                "error": f"Modal Whisper error: {data.get('message', 'unknown')}",
+            }
+        transcript = (data.get("text") or "").strip()
+        return {
+            "success": True,
+            "transcript": transcript,
+            "provider": "modal",
+            "detected_language": data.get("detected_language"),
+            "duration_seconds": data.get("duration_seconds"),
+        }
+    except Exception as exc:
+        logger.error("Modal Whisper STT failed: %s", exc)
+        return {
+            "success": False,
+            "transcript": "",
+            "error": f"Modal Whisper connection error: {exc}",
+        }
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 
 def _transcribe_prepared_audio(file_path: str, model: Optional[str] = None) -> Dict[str, Any]:
@@ -2454,6 +2532,11 @@ def _transcribe_prepared_audio(file_path: str, model: Optional[str] = None) -> D
         di_config = di_config if isinstance(di_config, dict) else {}
         model_name = model or di_config.get("model") or ""
         return _transcribe_deepinfra(file_path, model_name)
+
+    if provider == "modal":
+        modal_cfg = stt_config.get("modal") or {}
+        language = _resolve_stt_language("modal", stt_config)
+        return _transcribe_modal(file_path, language=language)
 
     # User-declared command-type provider
     # (``stt.providers.<name>: type: command``). Fires after the built-in

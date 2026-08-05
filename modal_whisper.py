@@ -5,7 +5,10 @@ app = modal.App("hermes-whisper")
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("ffmpeg")
-    .pip_install("faster-whisper", "requests", "fastapi[standard]")
+    .pip_install("faster-whisper", "nvidia-cublas-cu12", "nvidia-cudnn-cu12", "requests", "fastapi[standard]")
+    .env({
+        "LD_LIBRARY_PATH": "/usr/local/lib/python3.11/site-packages/nvidia/cublas/lib:/usr/local/lib/python3.11/site-packages/nvidia/cudnn/lib"
+    })
 )
 
 
@@ -21,6 +24,17 @@ def transcribe(data: dict):
     import base64
     import tempfile
     import requests
+    import glob
+    import ctypes
+
+    # Preload nvidia CUDA shared libraries (cublas, cudnn) for ctranslate2
+    for pattern in ["/usr/local/lib/python*/*packages/nvidia/*/lib/*.so*"]:
+        for path in sorted(glob.glob(pattern)):
+            try:
+                ctypes.CDLL(path)
+            except Exception:
+                pass
+
     from faster_whisper import WhisperModel
 
     audio_url = data.get("audio_url", "").strip()
