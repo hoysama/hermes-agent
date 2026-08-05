@@ -68,8 +68,16 @@ Hermes connects to dedicated Modal microservices to offload heavy workloads:
 When modifying any tool or backend microservice:
 1. Deploy the specific microservice (e.g. `modal deploy modal_whisper.py` or `modal deploy modal_searxng.py`).
 2. Verify the tool implementation in `tools/*.py` complies with `registry.register(handler=..., schema=...)`.
-3. Sync `config.yaml` to Modal volume profiles:
+3. Sync `config.yaml` and `.env` to Modal volume profiles:
    `modal volume put hermes-storage ~/.hermes/config.yaml /config.yaml --force`
    `modal volume put hermes-storage ~/.hermes/config.yaml /profiles/hazem/config.yaml --force`
    `modal volume put hermes-storage ~/.hermes/config.yaml /profiles/projectsentinelsupport/config.yaml --force`
+   `modal volume put hermes-storage ~/.hermes/.env /.env --force`
+   `modal volume put hermes-storage ~/.hermes/.env /profiles/hazem/.env --force`
+   `modal volume put hermes-storage ~/.hermes/.env /profiles/projectsentinelsupport/.env --force`
 4. Redeploy the 3 main Hermes instances (`modal_deploy.py`, `modal_deploy_support.py`, `modal_deploy_hazem.py`) so the updated tool definitions and configs take effect in active gateway sessions.
+
+### 4. Modal Proxy Auth Security & Secrets Management
+- **Proxy Token Authorization**: All auxiliary microservices are secured with `requires_proxy_auth=True`. Tools in `tools/` and `plugins/` must send `get_modal_auth_headers()` from `tools/tool_backend_helpers.py`.
+- **Runtime Environment Filter (`build_runtime_environment`)**: Deployment scripts (`modal_deploy.py`, `modal_deploy_hazem.py`, `modal_deploy_support.py`) explicitly preserve `MODAL_PROXY_TOKEN_*` environment variables when generating `$HERMES_HOME/.env`.
+- **Modal Secrets Binding**: Cloud secrets (`modal_proxy_tokens`, `searxng`) are listed in `hermes_secrets` across deployment scripts for automated cloud secret injection.
