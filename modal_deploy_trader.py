@@ -81,73 +81,27 @@ def build_runtime_environment() -> dict[str, str]:
     image=hermes_image,
     volumes={HERMES_HOME: hermes_volume},
     secrets=hermes_secrets,
+    min_containers=1,
     max_containers=1,
     timeout=86400,
 )
-def run_gateway():
-    """Run Hermes Trader Gateway process."""
+@modal.web_server(
+    port=GATEWAY_PORT,
+    startup_timeout=120,
+)
+def api_server():
+    """Run Hermes Trader Gateway server and Telegram polling loop."""
     hermes_volume.reload()
     env = build_runtime_environment()
-    hermes_volume.commit()
+
+    env["API_SERVER_ENABLED"] = "true"
+    env["API_SERVER_PORT"] = str(GATEWAY_PORT)
+    env["API_SERVER_HOST"] = "0.0.0.0"
 
     print("Starting Hermes Trader Gateway Server...")
-    process = subprocess.Popen(
+    subprocess.run(
         ["hermes", "-p", "trader", "gateway", "run"],
         env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
+        cwd=HERMES_ROOT,
+        check=True,
     )
-
-    for line in iter(process.stdout.readline, ""):
-        print(line, end="")
-
-    process.wait()
-    if process.returncode != 0:
-        raise subprocess.CalledProcessError(process.returncode, process.args)
-
-
-@app.function(
-    image=hermes_image,
-    volumes={HERMES_HOME: hermes_volume},
-    secrets=hermes_secrets,
-    timeout=86400,
-)
-@modal.asgi_app()
-def api_server():
-    """Expose Hermes Trader Gateway API server."""
-    from fastapi import FastAPI, Response
-    from fastapi.middleware.cors import CORSMiddleware
-    import urllib.request
-    import urllib.error
-
-    fastapi_app = FastAPI(title="Hermes Trader API Server")
-    fastapi_app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
-    @fastapi_app.get("/health")
-    def health():
-        return {"status": "ok", "app": APP_NAME}
-
-    @fastapi_app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
-    def proxy(path: str, response: Response):
-        url = f"http://127.0.0.1:{GATEWAY_PORT}/{path}"
-        try:
-            req = urllib.request.Request(url)
-            with urllib.request.urlopen(req) as resp:
-                response.status_code = resp.status
-                return resp.read()
-        except urllib.error.HTTPError as e:
-            response.status_code = e.code
-            return e.read()
-        except Exception:
-            response.status_code = 502
-            return {"error": "Gateway proxy unreachable"}
-
-    return fastapi_app
