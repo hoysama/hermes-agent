@@ -39,27 +39,37 @@ When registering custom tools in `tools/*.py`:
 ### 2. Deployed Modal Auxiliary Microservices
 Hermes connects to dedicated Modal microservices to offload heavy workloads:
 - **`hermes-whisper`** (`modal_whisper.py`):
-  - Tool: `audio_transcribe` (`tools/audio_transcribe_tool.py`)
+  - Tool: `audio_transcribe` (`tools/audio_transcribe_tool.py`) & Gateway Auto-STT Provider (`stt.provider: modal` in `tools/transcription_tools.py`)
   - Endpoint: `https://hoysama--hermes-whisper-transcribe.modal.run`
-  - Engine: Faster-Whisper (`large-v3`) on GPU with VAD filtering & translation support.
-- **`hermes-reranker`** (`modal_deploy_reranker.py` / `modal_reranker.py`):
+  - Engine: Faster-Whisper (`large-v3`) on GPU with CUDA 12 preloading (`nvidia-cublas-cu12`, `nvidia-cudnn-cu12`), VAD filtering & auto language detection.
+- **`hermes-searxng`** (`modal_searxng.py`):
+  - Tool: `web_search` (`tools/web_search_tool.py` via `web.search_backend: searxng`)
+  - Endpoint: `https://hoysama--hermes-searxng-search.modal.run`
+  - Engine: Multi-engine web search (SearXNG + DuckDuckGo + Google) at zero API cost.
+- **`hermes-reranker`** (`modal_reranker.py`):
   - Tool: `web_rerank` (`tools/web_rerank_tool.py`)
   - Endpoint: `https://hoysama--hermes-reranker-rerank.modal.run`
   - Engine: FlashRank (`ms-marco-TinyBERT-L-2-v2`) cross-encoder for semantic passage ranking.
-- **`hermes-docling`** (`modal_deploy_docling.py` / `modal_docling.py`):
+- **`hermes-docling`** (`modal_docling.py`):
   - Tool: `document_extract` (`tools/document_extract_tool.py`)
   - Endpoint: `https://hoysama--hermes-docling-extract-document.modal.run`
   - Engine: IBM Docling for deep PDF/DOCX/HTML layout extraction & OCR.
-- **`hermes-search-engine`** (`modal_deploy_search.py` / `modal_searxng.py`):
-  - Tool: `web_search` (`tools/web_search_tool.py`)
-  - Endpoint: `https://hoysama--hermes-search-engine-search.modal.run`
-  - Engine: Multi-engine web search (SearXNG + DuckDuckGo + Google + Bing).
-- **`hermes-uc-backend`** (`modal_deploy_uc.py` / `modal_uc_browser.py`):
+- **`hermes-web-extractor`** (`modal_extract.py`):
+  - Tool: `web_extract` (`tools/web_extract_tool.py`)
+  - Endpoint: `https://hoysama--hermes-web-extractor-extract.modal.run`
+  - Engine: Crawl4AI + Playwright headless browser markdown web page extraction.
+- **`hermes-uc-backend`** (`modal_uc_browser.py`):
   - Tool: Browser / Computer Use automation endpoint.
+  - Endpoint: `https://hoysama--hermes-uc-backend-browser.modal.run`
+  - Engine: Undetected-Chromium + Playwright browser automation.
 
 
 ### 3. Microservice Update & Deployment Workflow
 When modifying any tool or backend microservice:
-1. Deploy the specific microservice (e.g. `modal deploy modal_deploy_reranker.py`).
+1. Deploy the specific microservice (e.g. `modal deploy modal_whisper.py` or `modal deploy modal_searxng.py`).
 2. Verify the tool implementation in `tools/*.py` complies with `registry.register(handler=..., schema=...)`.
-3. Redeploy the 3 main Hermes instances (`modal_deploy.py`, `modal_deploy_support.py`, `modal_deploy_hazem.py`) so the updated tool definitions take effect in the active gateway sessions.
+3. Sync `config.yaml` to Modal volume profiles:
+   `modal volume put hermes-storage ~/.hermes/config.yaml /config.yaml --force`
+   `modal volume put hermes-storage ~/.hermes/config.yaml /profiles/hazem/config.yaml --force`
+   `modal volume put hermes-storage ~/.hermes/config.yaml /profiles/projectsentinelsupport/config.yaml --force`
+4. Redeploy the 3 main Hermes instances (`modal_deploy.py`, `modal_deploy_support.py`, `modal_deploy_hazem.py`) so the updated tool definitions and configs take effect in active gateway sessions.

@@ -57,6 +57,8 @@ def transcribe(data: dict):
                 temp_file.write(raw_bytes)
             temp_path = temp_file.name
 
+        initial_prompt = data.get("initial_prompt", None)
+
         # Load Faster-Whisper Model (large-v3 float16 on GPU)
         model = WhisperModel("large-v3", device="cuda", compute_type="float16")
         segments, info = model.transcribe(
@@ -64,6 +66,9 @@ def transcribe(data: dict):
             language=language,
             task=task,
             beam_size=5,
+            initial_prompt=initial_prompt,
+            condition_on_previous_text=False,
+            repetition_penalty=1.1,
             vad_filter=True,  # Voice activity detection filter for clean segments
         )
 
@@ -77,12 +82,15 @@ def transcribe(data: dict):
                 "text": segment.text.strip(),
             })
 
+        final_text = " ".join(full_text).strip()
+        print(f"🎙️ [Whisper Transcribe] Language: {info.language} ({info.language_probability:.2f}), Duration: {info.duration:.2f}s | Result: '{final_text}'")
+
         return {
             "status": "success",
             "detected_language": info.language,
             "language_probability": round(info.language_probability, 4),
             "duration_seconds": round(info.duration, 2),
-            "text": " ".join(full_text).strip(),
+            "text": final_text,
             "segments": segment_list,
         }
     except Exception as e:
