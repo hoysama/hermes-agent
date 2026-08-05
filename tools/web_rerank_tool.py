@@ -54,36 +54,42 @@ def web_rerank_tool(query: str, passages: list, top_n: int = 5) -> str:
 
 
 WEB_RERANK_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "web_rerank",
-        "description": "Rank and filter a list of text snippets or search results by their exact semantic relevance to a query. Use this tool after web search when you have multiple search results and want to extract the top most relevant passages.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The target search query or question to evaluate relevance against.",
-                },
-                "passages": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "List of text snippets, search result summaries, or document paragraphs to rank.",
-                },
-                "top_n": {
-                    "type": "integer",
-                    "description": "Number of top relevant passages to return (default: 5).",
-                    "default": 5,
-                },
+    "name": "web_rerank",
+    "description": (
+        "Rank and filter a list of text snippets or search results by their exact semantic relevance to a query. "
+        "Use this tool whenever you execute a web search and receive multiple search results or paragraphs, "
+        "to filter out noisy/irrelevant passages and extract only the top most relevant snippets."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "The target search query or question to evaluate relevance against.",
             },
-            "required": ["query", "passages"],
+            "passages": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of text snippets, search result summaries, or document paragraphs to rank.",
+            },
+            "top_n": {
+                "type": "integer",
+                "description": "Number of top relevant passages to return (default: 5).",
+                "default": 5,
+            },
         },
+        "required": ["query", "passages"],
     },
 }
 
 registry.register(
     name="web_rerank",
-    func=web_rerank_tool,
+    toolset="web",
     schema=WEB_RERANK_SCHEMA,
-    description="Rank search snippets or text passages by semantic relevance to a query via Modal CrossEncoder.",
+    handler=lambda args, **kw: web_rerank_tool(
+        query=args.get("query", ""),
+        passages=args.get("passages", []),
+        top_n=args.get("top_n", 5),
+    ),
+    emoji="🧠",
 )
