@@ -38,20 +38,25 @@ When registering custom tools in `tools/*.py`:
 
 ### 2. Deployed Modal Auxiliary Microservices
 Hermes connects to dedicated Modal microservices to offload heavy workloads:
-- **`hermes-reranker`** (`modal_deploy_reranker.py`):
+- **`hermes-whisper`** (`modal_whisper.py`):
+  - Tool: `audio_transcribe` (`tools/audio_transcribe_tool.py`)
+  - Endpoint: `https://hoysama--hermes-whisper-transcribe.modal.run`
+  - Engine: Faster-Whisper (`large-v3`) on GPU with VAD filtering & translation support.
+- **`hermes-reranker`** (`modal_deploy_reranker.py` / `modal_reranker.py`):
   - Tool: `web_rerank` (`tools/web_rerank_tool.py`)
   - Endpoint: `https://hoysama--hermes-reranker-rerank.modal.run`
   - Engine: FlashRank (`ms-marco-TinyBERT-L-2-v2`) cross-encoder for semantic passage ranking.
-- **`hermes-docling`** (`modal_deploy_docling.py`):
+- **`hermes-docling`** (`modal_deploy_docling.py` / `modal_docling.py`):
   - Tool: `document_extract` (`tools/document_extract_tool.py`)
   - Endpoint: `https://hoysama--hermes-docling-extract-document.modal.run`
   - Engine: IBM Docling for deep PDF/DOCX/HTML layout extraction & OCR.
-- **`hermes-search-engine`** (`modal_deploy_search.py`):
+- **`hermes-search-engine`** (`modal_deploy_search.py` / `modal_searxng.py`):
   - Tool: `web_search` (`tools/web_search_tool.py`)
   - Endpoint: `https://hoysama--hermes-search-engine-search.modal.run`
   - Engine: Multi-engine web search (SearXNG + DuckDuckGo + Google + Bing).
-- **`hermes-uc-backend`** (`modal_deploy_uc.py`):
+- **`hermes-uc-backend`** (`modal_deploy_uc.py` / `modal_uc_browser.py`):
   - Tool: Browser / Computer Use automation endpoint.
+
 
 ### 3. Microservice Update & Deployment Workflow
 When modifying any tool or backend microservice:
