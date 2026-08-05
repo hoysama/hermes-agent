@@ -38,7 +38,7 @@ sb_image = (
     image=sb_image,
     timeout=120,
 )
-@modal.fastapi_endpoint(method="POST")
+@modal.fastapi_endpoint(method="POST", requires_proxy_auth=True)
 async def extract(data: dict):
     """
     Extract content from any URL using SeleniumBase UC Mode (Undetected Driver).

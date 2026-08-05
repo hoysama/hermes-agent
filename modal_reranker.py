@@ -20,7 +20,7 @@ rerank_image = (
     timeout=60,
     min_containers=0,
 )
-@modal.fastapi_endpoint(method="POST")
+@modal.fastapi_endpoint(method="POST", requires_proxy_auth=True)
 async def rerank(data: dict):
     """
     Rerank a list of search snippets or passages based on semantic relevance to a query.

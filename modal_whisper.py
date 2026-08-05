@@ -18,7 +18,7 @@ image = (
     timeout=300,
     scaledown_window=60,
 )
-@modal.fastapi_endpoint(method="POST")
+@modal.fastapi_endpoint(method="POST", requires_proxy_auth=True)
 def transcribe(data: dict):
     """Transcribe audio from a URL or base64 data using Faster-Whisper on Modal GPU with optional translation."""
     import base64

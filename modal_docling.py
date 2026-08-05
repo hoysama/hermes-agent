@@ -25,7 +25,7 @@ doc_image = (
     timeout=180,
     min_containers=0,
 )
-@modal.fastapi_endpoint(method="POST")
+@modal.fastapi_endpoint(method="POST", requires_proxy_auth=True)
 async def process_document(data: dict):
     """
     Process PDF, Office files (DOCX, PPTX, XLSX), or HTML and convert them into clean Markdown.

@@ -2392,7 +2392,8 @@ def _transcribe_modal(
         payload["language"] = language
 
     try:
-        resp = _requests.post(MODAL_WHISPER_URL, json=payload, timeout=120)
+        from tools.tool_backend_helpers import get_modal_auth_headers
+        resp = _requests.post(MODAL_WHISPER_URL, json=payload, headers=get_modal_auth_headers(), timeout=120)
         if resp.status_code != 200:
             return {
                 "success": False,

@@ -38,7 +38,7 @@ extract_image = (
     timeout=120,
     min_containers=0,
 )
-@modal.fastapi_endpoint(method="POST")
+@modal.fastapi_endpoint(method="POST", requires_proxy_auth=True)
 async def extract(data: dict):
     """
     Extract clean LLM-fit markdown from any web URL using Crawl4AI.

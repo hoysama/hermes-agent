@@ -9,6 +9,7 @@ import json
 import logging
 import requests
 from tools.registry import registry, tool_error
+from tools.tool_backend_helpers import get_modal_auth_headers
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ def document_extract_tool(url: str) -> str:
         response = requests.post(
             MODAL_DOCLING_URL,
             json={"url": url},
+            headers=get_modal_auth_headers(),
             timeout=120,
         )
         if response.status_code != 200:

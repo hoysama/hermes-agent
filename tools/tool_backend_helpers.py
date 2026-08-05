@@ -102,6 +102,17 @@ def has_direct_modal_credentials() -> bool:
     )
 
 
+def get_modal_auth_headers() -> Dict[str, str]:
+    """Return Modal Proxy Auth headers if MODAL_PROXY_TOKEN_ID and MODAL_PROXY_TOKEN_SECRET are set."""
+    token_id = os.getenv("MODAL_PROXY_TOKEN_ID", "").strip()
+    token_secret = os.getenv("MODAL_PROXY_TOKEN_SECRET", "").strip()
+    headers: Dict[str, str] = {}
+    if token_id and token_secret:
+        headers["Modal-Key"] = token_id
+        headers["Modal-Secret"] = token_secret
+    return headers
+
+
 def resolve_modal_backend_state(
     modal_mode: object | None,
     *,

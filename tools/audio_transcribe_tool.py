@@ -9,6 +9,7 @@ import json
 import logging
 import requests
 from tools.registry import registry, tool_error
+from tools.tool_backend_helpers import get_modal_auth_headers
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ def audio_transcribe_tool(audio_url: str = "", audio_b64: str = "", language: st
         response = requests.post(
             MODAL_WHISPER_URL,
             json=payload,
+            headers=get_modal_auth_headers(),
             timeout=120,
         )
         if response.status_code != 200:

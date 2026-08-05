@@ -102,7 +102,7 @@ EOF""",
     memory=1024,
     scaledown_window=120,
 )
-@modal.web_server(8080, startup_timeout=120.0)
+@modal.web_server(8080, startup_timeout=120.0, requires_proxy_auth=True)
 def searxng_app():
     """Start SearXNG in the background and wait for it to be ready."""
     env = os.environ.copy()
