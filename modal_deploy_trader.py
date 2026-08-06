@@ -17,6 +17,7 @@ hermes_volume = modal.Volume.from_name(
 
 hermes_secrets = [
     modal.Secret.from_name("hermes_trader"),
+    modal.Secret.from_name("hermes_trader_live"),
     modal.Secret.from_name("hermes-secrets"),
     modal.Secret.from_name("modal_proxy_tokens"),
     modal.Secret.from_name("searxng"),
