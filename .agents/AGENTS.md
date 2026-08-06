@@ -43,7 +43,7 @@ Hermes connects to dedicated Modal microservices to offload heavy workloads:
 - **`hermes-trader`** (`modal_trader.py`):
   - Tool: `trader_status` (`tools/trader_tool.py`)
   - Endpoint: `https://hoysama--hermes-trader-status.modal.run`
-  - Engine: Freqtrade Binance/OKX Spot Quantitative Trading Engine (Dry-Run & Live Trading, 10% max stake per trade, Sharia-compliant whitelist).
+  - Engine: Freqtrade OKX/Binance Spot Quantitative Trading Engine (Dry-Run & Live Trading, 5% dynamic stake per trade, $20 daily loss limit, Sharia-compliant 15-coin whitelist).
 - **`hermes-whisper`** (`modal_whisper.py`):
   - Tool: `audio_transcribe` (`tools/audio_transcribe_tool.py`) & Gateway Auto-STT Provider (`stt.provider: modal` in `tools/transcription_tools.py`)
   - Endpoint: `https://hoysama--hermes-whisper-transcribe.modal.run`
