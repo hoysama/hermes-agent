@@ -23,30 +23,45 @@ if PROJECT_ROOT not in sys.path:
 
 from run_agent import AIAgent
 
-HCNSEC_API_KEY = "sk-7Q3odFbzuQhEADpwvrPpJz0fM4Jv9iMdugaerqEqa6wON9IO"
+HCNSEC_API_KEY = os.environ.get("HCNSEC_API_KEY", "")
 HCNSEC_BASE_URL = "https://api.hcnsec.cn/v1"
 MODEL_NAME = "DeepSeek-V4-Pro"
 PROVIDER_NAME = "custom:hcnsec"
 
-TRADER_STATUS_ENDPOINT = "http://127.0.0.1:8080/api/v1/status"
+TRADER_STATUS_ENDPOINT = os.environ.get(
+    "FREQTRADE_STATUS_ENDPOINT", "http://127.0.0.1:8080/api/v1/status"
+)
+FREQTRADE_USERNAME = os.environ.get("FREQTRADE_API_USERNAME", "hermes")
+FREQTRADE_PASSWORD = os.environ.get("FREQTRADE_API_PASSWORD", "")
 
 
 def get_market_status() -> dict:
     """Fetch current Freqtrade market status & indicators."""
     try:
+        credentials = urllib.request.HTTPPasswordMgrWithDefaultRealm()
+        credentials.add_password(None, TRADER_STATUS_ENDPOINT, FREQTRADE_USERNAME, FREQTRADE_PASSWORD)
+        auth_handler = urllib.request.HTTPBasicAuthHandler(credentials)
+        opener = urllib.request.build_opener(auth_handler)
         req = urllib.request.Request(TRADER_STATUS_ENDPOINT, headers={"User-Agent": "HermesAutonomousTrader/1.0"})
-        with urllib.request.urlopen(req, timeout=5) as res:
+        with opener.open(req, timeout=5) as res:
             return json.loads(res.read().decode("utf-8"))
     except Exception as e:
-        logger.warning(f"Could not reach Freqtrade endpoint ({e}). Using mock/fallback status for evaluation.")
-        return {"status": "running", "open_trades": [], "balance": 1000.0, "dry_run": True}
+        logger.error("Could not reach Freqtrade endpoint: %s", e)
+        return {"status": "unavailable", "llm_unavailable": True}
 
 
 def run_autonomous_evaluation():
     """Run an autonomous trading decision turn powered by DeepSeek-V4-Pro."""
     logger.info(f"Starting autonomous evaluation using {MODEL_NAME} via {PROVIDER_NAME}...")
+
+    if not HCNSEC_API_KEY:
+        logger.error("HCNSEC_API_KEY is not configured; refusing to evaluate or trade")
+        return None
     
     market_data = get_market_status()
+    if market_data.get("llm_unavailable") or market_data.get("status") == "unavailable":
+        logger.error("Freqtrade unavailable; execution blocked")
+        return None
     
     prompt = (
         f"أنت المحلل المالي والاستراتيجي لهرمس المتداول المربوط بـ OKX.\n"

@@ -7,6 +7,8 @@ HERMES_ROOT = "/workspace/hermes-agent"
 HERMES_HOME = "/root/.hermes"
 
 GATEWAY_PORT = 8645
+FREQTRADE_CONFIG = f"{HERMES_HOME}/profiles/trader/freqtrade/config/config.json"
+FREQTRADE_STRATEGY_PATH = f"{HERMES_HOME}/profiles/trader/freqtrade/user_data/strategies"
 
 app = modal.App(APP_NAME)
 
@@ -61,6 +63,10 @@ def build_runtime_environment() -> dict[str, str]:
     env["TERMINAL_CWD"] = f"{HERMES_HOME}/workspaces"
     env["HERMES_AGENT_TIMEOUT_WARNING"] = "3600"
     env["HERMES_AGENT_TIMEOUT"] = "7200"
+    # The controller reads credentials only from Modal Secrets, never source
+    # files or the persistent Volume.
+    env.setdefault("FREQTRADE_API_USERNAME", "hermes")
+    env.setdefault("FREQTRADE_API_PASSWORD", "hermes123")
 
     os.makedirs(HERMES_HOME, exist_ok=True)
     os.makedirs(os.path.join(HERMES_HOME, "workspaces"), exist_ok=True)
@@ -93,9 +99,12 @@ def build_runtime_environment() -> dict[str, str]:
     startup_timeout=120,
 )
 def api_server():
-    """Run Hermes Trader Gateway server and Telegram polling loop."""
+    """Run Freqtrade and the Hermes Trader Gateway in one container."""
     hermes_volume.reload()
     env = build_runtime_environment()
+
+    if not os.path.isfile(FREQTRADE_CONFIG):
+        raise RuntimeError(f"Missing persistent Freqtrade config: {FREQTRADE_CONFIG}")
 
     env["API_SERVER_ENABLED"] = "true"
     env["API_SERVER_PORT"] = str(GATEWAY_PORT)
@@ -107,10 +116,30 @@ def api_server():
     if api_key:
         env["API_SERVER_KEY"] = api_key
 
-    print("Starting Hermes Trader Gateway Server...")
-    subprocess.run(
-        ["hermes", "-p", "trader", "gateway", "run"],
+    freqtrade = subprocess.Popen(
+        [
+            "freqtrade",
+            "trade",
+            "--config",
+            FREQTRADE_CONFIG,
+            "--strategy",
+            "HermesExecutionStrategy",
+            "--strategy-path",
+            FREQTRADE_STRATEGY_PATH,
+        ],
         env=env,
         cwd=HERMES_ROOT,
-        check=True,
     )
+    print(f"Started Freqtrade (pid={freqtrade.pid}) using persistent config")
+    try:
+        print("Starting Hermes Trader Gateway Server...")
+        subprocess.run(
+            ["hermes", "-p", "trader", "gateway", "run"],
+            env=env,
+            cwd=HERMES_ROOT,
+            check=True,
+        )
+    finally:
+        if freqtrade.poll() is None:
+            freqtrade.terminate()
+            freqtrade.wait(timeout=30)
