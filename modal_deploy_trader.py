@@ -47,7 +47,9 @@ hermes_image = (
         ],
     )
     .run_commands(
-        f"pip install -e {HERMES_ROOT} ccxt",
+        # Freqtrade must be part of the immutable image. Runtime state,
+        # configs, databases, strategies, and reports live in hermes_volume.
+        f"pip install -e {HERMES_ROOT} ccxt freqtrade",
     )
 )
 
@@ -98,6 +100,12 @@ def api_server():
     env["API_SERVER_ENABLED"] = "true"
     env["API_SERVER_PORT"] = str(GATEWAY_PORT)
     env["API_SERVER_HOST"] = "0.0.0.0"
+    # The Hermes API adapter refuses to bind without a strong caller key.
+    # Reuse the already-injected Modal proxy secret instead of putting a
+    # credential in the image or persistent volume.
+    api_key = env.get("MODAL_PROXY_TOKEN_SECRET", "")
+    if api_key:
+        env["API_SERVER_KEY"] = api_key
 
     print("Starting Hermes Trader Gateway Server...")
     subprocess.run(
