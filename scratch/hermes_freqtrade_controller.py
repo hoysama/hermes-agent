@@ -39,7 +39,7 @@ FREQTRADE_API = {
 
 STATE_DIR = '/root/.hermes/profiles/trader/freqtrade' if os.path.exists('/root') and os.access('/root', os.W_OK) else os.path.expanduser('~/.hermes/profiles/trader/freqtrade')
 STATE_FILE = os.path.join(STATE_DIR, 'hermes_state.json')
-HCNSEC_API_KEY = os.environ.get('HCNSEC_API_KEY') or os.environ.get('OPENAI_API_KEY') or 'sk-7Q3odFbzuQhEADpwvrPpJz0fM4Jv9iMdugaerqEqa6wON9IO'
+HCNSEC_API_KEY = os.environ.get('HCNSEC_API_KEY') or os.environ.get('OPENAI_API_KEY') or 'sk-kHjwjdZoQyLn8dePrUMT7b5hGUffhfl9K3r89pENTppcanDp'
 HCNSEC_BASE_URL = os.environ.get('HCNSEC_BASE_URL') or 'https://api.hcnsec.cn/v1'
 MODEL_NAME = 'DeepSeek-V4-Pro'
 
