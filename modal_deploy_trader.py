@@ -95,10 +95,10 @@ def build_runtime_environment() -> dict[str, str]:
     min_containers=1,
     max_containers=1,
     # Hermes, Freqtrade, CCXT websockets, and the gateway share this long-lived
-    # container. Explicit modest reservations avoid relying on Modal's 128 MiB
-    # default while keeping the always-on dry-run workload cost-conscious.
-    cpu=0.5,
-    memory=1024,
+    # container. Keep a modest reservation above Modal's 128 MiB default so the
+    # always-on dry-run workload remains schedulable without over-reserving.
+    cpu=0.25,
+    memory=512,
     timeout=86400,
 )
 @modal.web_server(
