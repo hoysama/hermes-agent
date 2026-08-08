@@ -9,6 +9,7 @@ HERMES_HOME = "/root/.hermes"
 GATEWAY_PORT = 8645
 FREQTRADE_CONFIG = f"{HERMES_HOME}/profiles/trader/freqtrade/config/config.json"
 FREQTRADE_STRATEGY_PATH = f"{HERMES_HOME}/profiles/trader/freqtrade/user_data/strategies"
+FREQTRADE_USERDIR = f"{HERMES_HOME}/profiles/trader/freqtrade/user_data"
 
 app = modal.App(APP_NAME)
 
@@ -122,6 +123,8 @@ def api_server():
             "trade",
             "--config",
             FREQTRADE_CONFIG,
+            "--userdir",
+            FREQTRADE_USERDIR,
             "--strategy",
             "HermesExecutionStrategy",
             "--strategy-path",
