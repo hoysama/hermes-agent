@@ -8,6 +8,7 @@ import sys
 import json
 import logging
 import urllib.request
+from typing import Any
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -24,7 +25,7 @@ if PROJECT_ROOT not in sys.path:
 from run_agent import AIAgent
 
 HCNSEC_API_KEY = os.environ.get("HCNSEC_API_KEY", "")
-HCNSEC_BASE_URL = "https://api.hcnsec.cn/v1"
+HCNSEC_BASE_URL = os.environ.get("HCNSEC_BASE_URL", "https://api.hcnsec.cn/v1")
 MODEL_NAME = "DeepSeek-V4-Pro"
 PROVIDER_NAME = "custom:hcnsec"
 
@@ -33,6 +34,33 @@ TRADER_STATUS_ENDPOINT = os.environ.get(
 )
 FREQTRADE_USERNAME = os.environ.get("FREQTRADE_API_USERNAME", "hermes")
 FREQTRADE_PASSWORD = os.environ.get("FREQTRADE_API_PASSWORD", "")
+
+
+def parse_model_json(raw: Any) -> dict | None:
+    """Parse a model JSON object, including fenced or wrapped responses."""
+    if not isinstance(raw, str):
+        return raw if isinstance(raw, dict) else None
+    text = raw.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+        if text.endswith("```"):
+            text = text[:-3].rstrip()
+    try:
+        value = json.loads(text)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        start, end = text.find("{"), text.rfind("}")
+        if start < 0 or end <= start:
+            logger.error("Model returned non-JSON output (%d chars)", len(text))
+            return None
+        try:
+            value = json.loads(text[start : end + 1])
+        except (json.JSONDecodeError, TypeError, ValueError):
+            logger.error("Model returned malformed JSON (%d chars)", len(text))
+            return None
+    if not isinstance(value, dict):
+        logger.error("Model JSON was not an object")
+        return None
+    return value
 
 
 def get_market_status() -> dict:
@@ -70,7 +98,8 @@ def run_autonomous_evaluation():
         f"المطلوب:\n"
         f"1. قم بتحليل اتجاه السوق الحالي للـ 15 عملة الحلال (BTC, ETH, SOL, LINK, AVAX, BNB, XRP, ADA, DOT, UNI, ATOM, LTC, XLM, ALGO).\n"
         f"2. اتخذ قرار الشراء أو البيع التلقائي للعملات الصاعدة بقوة (مثل ADA أو SOL) مع إدراج نسبة الثقة والهدف الستراتيجي.\n"
-        f"3. نسق تقريراً تداولياً احترافياً ومباشراً للنمط المستقل ليتم بثه لحساب المستخدم بـ التلغرام."
+        f"3. أعد JSON صالحاً فقط، بلا Markdown أو شرح خارج JSON، بهذه المفاتيح: "
+        f"regime, decisions, confidence, rationale. decisions يجب أن تكون قائمة."
     )
 
     try:
@@ -82,8 +111,12 @@ def run_autonomous_evaluation():
             quiet_mode=True,
         )
         decision = agent.chat(prompt)
-        logger.info("Autonomous decision generated successfully!")
-        return decision
+        parsed = parse_model_json(decision)
+        if parsed is None:
+            logger.error("No valid DeepSeek decision; execution blocked")
+            return None
+        logger.info("Autonomous decision generated successfully from %s", PROVIDER_NAME)
+        return parsed
     except Exception as e:
         logger.error(f"Error executing DeepSeek-V4-Pro autonomous evaluation: {e}")
         return None

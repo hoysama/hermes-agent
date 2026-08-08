@@ -68,6 +68,7 @@ def build_runtime_environment() -> dict[str, str]:
     # files or the persistent Volume.
     env.setdefault("FREQTRADE_API_USERNAME", "hermes")
     env.setdefault("FREQTRADE_API_PASSWORD", "hermes123")
+    env.setdefault("HCNSEC_BASE_URL", "https://api.hcnsec.cn/v1")
 
     os.makedirs(HERMES_HOME, exist_ok=True)
     os.makedirs(os.path.join(HERMES_HOME, "workspaces"), exist_ok=True)
