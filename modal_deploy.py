@@ -20,7 +20,8 @@ hermes_secrets = [
     modal.Secret.from_name("telegram"),
     modal.Secret.from_name("cloudflare"),
     modal.Secret.from_name("codexeverywhere"),
-    modal.Secret.from_name("github-secret"),
+        modal.Secret.from_name("github-secret"),
+        modal.Secret.from_name("circlecicli"),
     modal.Secret.from_name("OPENROUTER"),
     modal.Secret.from_name("iamhc"),
     modal.Secret.from_name("modal_proxy_tokens"),
@@ -103,6 +104,7 @@ def build_runtime_environment() -> dict[str, str]:
         "HOSTNAME",
         "SHLVL",
         "_",
+        "CIRCLECI_CLI_TOKEN",
     }
 
     with open(temporary_path, "w", encoding="utf-8") as env_file:
