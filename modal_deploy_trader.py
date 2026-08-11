@@ -1,4 +1,5 @@
 import os
+import json
 import subprocess
 import modal
 
@@ -10,6 +11,7 @@ GATEWAY_PORT = 8645
 FREQTRADE_CONFIG = f"{HERMES_HOME}/profiles/trader/freqtrade/config/config.json"
 FREQTRADE_STRATEGY_PATH = f"{HERMES_HOME}/profiles/trader/freqtrade/user_data/strategies"
 FREQTRADE_USERDIR = f"{HERMES_HOME}/profiles/trader/freqtrade/user_data"
+FREQTRADE_RUNTIME_CONFIG = "/tmp/hermes-freqtrade-config.json"
 
 app = modal.App(APP_NAME)
 
@@ -88,6 +90,37 @@ def build_runtime_environment() -> dict[str, str]:
     return env
 
 
+def build_freqtrade_runtime_config(env: dict[str, str]) -> str:
+    """Create a non-persistent Freqtrade config with live credentials injected.
+
+    The persistent config never contains exchange credentials. Dry-run keeps
+    them absent; live mode requires all three OKX values from Modal Secrets.
+    """
+    with open(FREQTRADE_CONFIG, encoding="utf-8") as handle:
+        config = json.load(handle)
+
+    exchange = config.setdefault("exchange", {})
+    if config.get("dry_run", True):
+        exchange.pop("key", None)
+        exchange.pop("secret", None)
+        exchange.pop("password", None)
+    else:
+        required = ("OKX_API_KEY", "OKX_SECRET_KEY", "OKX_PASSPHRASE")
+        missing = [name for name in required if not env.get(name)]
+        if missing:
+            raise RuntimeError(
+                "Live trading blocked; missing Modal Secret values: "
+                + ", ".join(missing)
+            )
+        exchange["key"] = env["OKX_API_KEY"]
+        exchange["secret"] = env["OKX_SECRET_KEY"]
+        exchange["password"] = env["OKX_PASSPHRASE"]
+
+    with open(FREQTRADE_RUNTIME_CONFIG, "w", encoding="utf-8") as handle:
+        json.dump(config, handle, indent=2)
+    return FREQTRADE_RUNTIME_CONFIG
+
+
 @app.function(
     image=hermes_image,
     volumes={HERMES_HOME: hermes_volume},
@@ -112,6 +145,7 @@ def api_server():
 
     if not os.path.isfile(FREQTRADE_CONFIG):
         raise RuntimeError(f"Missing persistent Freqtrade config: {FREQTRADE_CONFIG}")
+    runtime_config = build_freqtrade_runtime_config(env)
 
     env["API_SERVER_ENABLED"] = "true"
     env["API_SERVER_PORT"] = str(GATEWAY_PORT)
@@ -128,7 +162,7 @@ def api_server():
             "freqtrade",
             "trade",
             "--config",
-            FREQTRADE_CONFIG,
+            runtime_config,
             "--userdir",
             FREQTRADE_USERDIR,
             "--strategy",

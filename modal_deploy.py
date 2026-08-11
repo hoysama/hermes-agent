@@ -63,7 +63,7 @@ hermes_image = (
         ],
     )
     .run_commands(
-        f"pip install -e {HERMES_ROOT}",
+        f"pip install -e '{HERMES_ROOT}[messaging]'",
     )
 )
 
