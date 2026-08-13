@@ -566,6 +566,12 @@ Output ONLY JSON: {{"primary_regime": "<regime>", "secondary_regime": "<regime>"
 class StrategyEngine:
     def __init__(self, llm_url: str, llm_key: str, model: str):
         self.store = StrategyStore()
+        # Keep the execution guard backed by the same persisted trade archive
+        # used by the learning cycle. The controller calls this through the
+        # strategy engine before every BUY decision.
+        from hermes_learning_engine import HermesLearningEngine
+
+        self.learning_engine = HermesLearningEngine(llm_url, llm_key, model)
         self.regime_detector = RegimeDetector(llm_url, llm_key, model)
         self.llm_url = llm_url
         self.llm_key = llm_key
@@ -739,6 +745,9 @@ Rules:
     
     def get_strategy(self, strategy_id: str) -> Optional[StrategyDNA]:
         return self.store.strategies.get(strategy_id)
+
+    def loss_guard(self, strategy_id: str, pair: str) -> tuple[bool, str]:
+        return self.learning_engine.loss_guard(strategy_id, pair)
     
     def record_trade_result(self, strategy_id: str, pnl: float, pnl_pct: float, hold_hours: float):
         self.store.record_trade(strategy_id, pnl, pnl_pct, hold_hours)
