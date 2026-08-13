@@ -126,7 +126,7 @@ def build_runtime_environment() -> dict[str, str]:
     image=hermes_image,
     volumes={HERMES_HOME: hermes_volume},
     secrets=hermes_secrets,
-    min_containers=1,
+    min_containers=0,
     max_containers=1,
     timeout=86400,
 )
