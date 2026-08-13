@@ -1,0 +1,80 @@
+{
+  "trading_mode": "spot",
+  "margin_mode": "",
+  "stake_currency": "USDT",
+  "stake_amount": 50,
+  "tradable_balance_ratio": 0.99,
+  "fiat_display_currency": "USD",
+  "dry_run": true,
+  "dry_run_wallet": 1000,
+  "db_url": "sqlite:////root/.hermes/profiles/trader/freqtrade/tradesv3.dryrun.sqlite",
+  "cancel_open_orders_on_exit": false,
+  "exchange": {
+    "name": "okx",
+    "key": "",
+    "secret": "",
+    "password": "",
+    "ccxt_async_config": {
+      "enableRateLimit": true
+    },
+    "pair_whitelist": [
+      "BTC/USDT",
+      "ETH/USDT",
+      "SOL/USDT",
+      "LINK/USDT",
+      "AVAX/USDT",
+      "BNB/USDT",
+      "XRP/USDT",
+      "ADA/USDT",
+      "DOT/USDT",
+      "UNI/USDT",
+      "ATOM/USDT",
+      "LTC/USDT",
+      "XLM/USDT",
+      "ALGO/USDT"
+    ],
+    "pair_blacklist": []
+  },
+  "entry_pricing": {
+    "price_side": "other",
+    "use_order_book": true,
+    "order_book_top": 1,
+    "price_last_balance": 0.0
+  },
+  "exit_pricing": {
+    "price_side": "other",
+    "use_order_book": true,
+    "order_book_top": 1
+  },
+  "pairlists": [
+    {
+      "method": "StaticPairList"
+    }
+  ],
+  "strategy": "HermesExecutionStrategy",
+  "strategy_path": "user_data/strategies/",
+  "api_server": {
+    "enabled": true,
+    "listen_ip_address": "127.0.0.1",
+    "listen_port": 8080,
+    "verbosity": "error",
+    "enable_openapi": false,
+    "jwt_secret_key": "hermes_ai_trading_manager_2026_secure_key",
+    "CORS_origins": [],
+    "username": "hermes",
+    "password": "hermes123"
+  },
+  "force_entry_enable": true,
+  "force_exit_enable": true,
+  "initial_state": "running",
+  "internals": {
+    "process_throttle_secs": 5,
+    "interval": 60
+  },
+  "stoploss": -0.03,
+  "trailing_stop": true,
+  "trailing_stop_positive": 0.05,
+  "trailing_stop_positive_offset": 0.07,
+  "trailing_only_offset_is_reached": false,
+  "max_open_trades": 14
+}

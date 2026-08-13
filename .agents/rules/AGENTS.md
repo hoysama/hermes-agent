@@ -1,5 +1,14 @@
 # Workspace Rules for Hermes Modal Deployments & Provider Management
 
+## Secrets and Provider Credentials
+
+- Store every provider credential only in the Modal Secret `hermes-provider-keys`.
+- Keep provider configuration files limited to `name`, `base_url`, `model`, `models`, and `key_env`; never store plaintext `api_key` values in `config.yaml`, `.env`, source code, runtime files, Git, or Modal Volumes.
+- Use the matching environment names: `HCNSEC_API_KEY`, `IAMHC_API_KEY`, `GOROUTER_API_KEY`, `LYCLAUDE_API_KEY`, `VYCEAI_API_KEY`, `MOLEAPI_API_KEY`, `NARAROUTER_API_KEY`, and `ZENMUX_API_KEY`.
+- After a credential is exposed, rotate it in the provider dashboard and update the Modal Secret. Do not print, log, or inspect secret values; verify only that the variable is present.
+- Deployment scripts must bind `modal.Secret.from_name("hermes-provider-keys")` and must not persist the process environment to `$HERMES_HOME/.env` or any Volume.
+- Trader exchange credentials remain in the separate `hermes_trader_live` Secret and are injected only into the temporary live Freqtrade config; keep `dry_run=true` unless explicitly approved.
+
 ## Provider Addition/Removal Protocol
 When adding or removing an inference provider for Hermes:
 1. **Edit Config**: Always update the `custom_providers:` list directly inside `~/.hermes/config.yaml`. Do NOT hardcode provider logic into deployment scripts.
@@ -74,15 +83,13 @@ Hermes connects to dedicated Modal microservices to offload heavy workloads:
 When modifying any tool or backend microservice:
 1. Deploy the specific microservice (e.g. `modal deploy modal_whisper.py`, `modal deploy modal_searxng.py`, or `modal deploy modal_trader.py`).
 2. Verify the tool implementation in `tools/*.py` complies with `registry.register(handler=..., schema=...)`.
-3. Sync `config.yaml` and `.env` to Modal volume profiles:
+3. Sync non-secret `config.yaml` only to Modal volume profiles:
    `modal volume put hermes-storage ~/.hermes/config.yaml /config.yaml --force`
    `modal volume put hermes-storage ~/.hermes/config.yaml /profiles/hazem/config.yaml --force`
    `modal volume put hermes-storage ~/.hermes/config.yaml /profiles/projectsentinelsupport/config.yaml --force`
    `modal volume put hermes-storage ~/.hermes/config.yaml /profiles/trader/config.yaml --force`
-   `modal volume put hermes-storage ~/.hermes/.env /.env --force`
-   `modal volume put hermes-storage ~/.hermes/.env /profiles/hazem/.env --force`
-   `modal volume put hermes-storage ~/.hermes/.env /profiles/projectsentinelsupport/.env --force`
-   `modal volume put hermes-storage ~/.hermes/.env /profiles/trader/.env --force`
+   Never copy `.env` files or secret values to the Modal Volume. Secrets are
+   injected by the bound Modal Secret at process startup.
 4. Redeploy all 4 main Hermes instances (`modal_deploy.py`, `modal_deploy_support.py`, `modal_deploy_hazem.py`, `modal_deploy_trader.py`) so the updated tool definitions and configs take effect in active gateway sessions.
 
 ### 4. Modal Proxy Auth Security & Secrets Management

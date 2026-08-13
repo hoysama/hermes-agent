@@ -1,6 +1,8 @@
 import os
 import json
+import shutil
 import subprocess
+import yaml
 import modal
 
 APP_NAME = "hermes-trader-gateway-server"
@@ -13,6 +15,20 @@ FREQTRADE_STRATEGY_PATH = f"{HERMES_HOME}/profiles/trader/freqtrade/user_data/st
 FREQTRADE_USERDIR = f"{HERMES_HOME}/profiles/trader/freqtrade/user_data"
 FREQTRADE_RUNTIME_CONFIG = "/tmp/hermes-freqtrade-config.json"
 
+TRADER_RUNTIME_SOURCE = "/opt/hermes-trader-runtime"
+TRADER_SCRIPTS = os.path.join(HERMES_HOME, "profiles", "trader", "scripts")
+TRADER_STRATEGIES = os.path.join(FREQTRADE_USERDIR, "strategies")
+CUSTOM_PROVIDER_ENV = {
+    "gorouter": "GOROUTER_API_KEY",
+    "iamhc": "IAMHC_API_KEY",
+    "hcnsec": "HCNSEC_API_KEY",
+    "lyclaude": "LYCLAUDE_API_KEY",
+    "vyceai": "VYCEAI_API_KEY",
+    "moleapi": "MOLEAPI_API_KEY",
+    "nararouter": "NARAROUTER_API_KEY",
+    "zenmux": "ZENMUX_API_KEY",
+}
+
 app = modal.App(APP_NAME)
 
 hermes_volume = modal.Volume.from_name(
@@ -23,6 +39,7 @@ hermes_volume = modal.Volume.from_name(
 hermes_secrets = [
     modal.Secret.from_name("hermes_trader"),
     modal.Secret.from_name("hermes_trader_live"),
+    modal.Secret.from_name("hermes-provider-keys"),
     modal.Secret.from_name("hermes-secrets"),
     modal.Secret.from_name("modal_proxy_tokens"),
     modal.Secret.from_name("searxng"),
@@ -51,6 +68,11 @@ hermes_image = (
             "__pycache__",
         ],
     )
+    .add_local_dir(
+        "hermes_trader/runtime",
+        remote_path=TRADER_RUNTIME_SOURCE,
+        copy=True,
+    )
     .run_commands(
         # Freqtrade must be part of the immutable image. Runtime state,
         # configs, databases, strategies, and reports live in hermes_volume.
@@ -76,16 +98,29 @@ def build_runtime_environment() -> dict[str, str]:
     os.makedirs(os.path.join(HERMES_HOME, "workspaces"), exist_ok=True)
     os.makedirs(os.path.join(HERMES_HOME, "profiles", "trader"), exist_ok=True)
 
-    # Persist TELEGRAM_BOT_TOKEN from modal secret to profile .env
-    trader_env_path = os.path.join(HERMES_HOME, "profiles", "trader", ".env")
-    token = env.get("TELEGRAM_BOT_TOKEN", "")
-    with open(trader_env_path, "w") as f:
-        f.write(f'TELEGRAM_BOT_TOKEN="{token}"\n')
-
-    # Also persist to root .env
-    root_env_path = os.path.join(HERMES_HOME, ".env")
-    with open(root_env_path, "w") as f:
-        f.write(f'TELEGRAM_BOT_TOKEN="{token}"\n')
+    config_path = os.path.join(HERMES_HOME, "profiles", "trader", "config.yaml")
+    if os.path.isfile(config_path):
+        with open(config_path, encoding="utf-8") as handle:
+            config = yaml.safe_load(handle) or {}
+        changed = False
+        for provider in config.get("custom_providers", []) or []:
+            if not isinstance(provider, dict):
+                continue
+            name = str(provider.get("name", "")).strip().lower()
+            env_name = CUSTOM_PROVIDER_ENV.get(name)
+            if env_name and provider.get("api_key"):
+                provider.pop("api_key", None)
+                provider["key_env"] = env_name
+                changed = True
+        if changed:
+            temporary_path = f"{config_path}.tmp.{os.getpid()}"
+            with open(temporary_path, "w", encoding="utf-8") as handle:
+                os.chmod(temporary_path, 0o600)
+                yaml.safe_dump(config, handle, sort_keys=False, allow_unicode=True)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary_path, config_path)
+            os.chmod(config_path, 0o600)
 
     return env
 
@@ -121,6 +156,29 @@ def build_freqtrade_runtime_config(env: dict[str, str]) -> str:
     return FREQTRADE_RUNTIME_CONFIG
 
 
+def sync_trader_code() -> None:
+    """Synchronize versioned Trader code without replacing runtime state."""
+    os.makedirs(TRADER_SCRIPTS, exist_ok=True)
+    os.makedirs(TRADER_STRATEGIES, exist_ok=True)
+
+    for name in os.listdir(os.path.join(TRADER_RUNTIME_SOURCE, "scripts")):
+        source = os.path.join(TRADER_RUNTIME_SOURCE, "scripts", name)
+        if os.path.isfile(source):
+            shutil.copy2(source, os.path.join(TRADER_SCRIPTS, name))
+
+    for name in os.listdir(os.path.join(TRADER_RUNTIME_SOURCE, "strategies")):
+        source = os.path.join(TRADER_RUNTIME_SOURCE, "strategies", name)
+        if os.path.isfile(source):
+            shutil.copy2(source, os.path.join(TRADER_STRATEGIES, name))
+
+    # The persistent config owns user/runtime state. Seed it only when absent;
+    # credentials are still injected into the temporary config below.
+    if not os.path.isfile(FREQTRADE_CONFIG):
+        shutil.copy2(
+            os.path.join(TRADER_RUNTIME_SOURCE, "config.json"), FREQTRADE_CONFIG
+        )
+
+
 @app.function(
     image=hermes_image,
     volumes={HERMES_HOME: hermes_volume},
@@ -142,6 +200,7 @@ def api_server():
     """Run Freqtrade and the Hermes Trader Gateway in one container."""
     hermes_volume.reload()
     env = build_runtime_environment()
+    sync_trader_code()
 
     if not os.path.isfile(FREQTRADE_CONFIG):
         raise RuntimeError(f"Missing persistent Freqtrade config: {FREQTRADE_CONFIG}")

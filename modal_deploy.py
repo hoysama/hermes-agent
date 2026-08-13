@@ -1,5 +1,7 @@
 import os
+import re
 import subprocess
+import yaml
 import modal
 
 APP_NAME = "hermes-api-server"
@@ -7,6 +9,20 @@ HERMES_ROOT = "/workspace/hermes-agent"
 HERMES_HOME = "/root/.hermes"
 
 GATEWAY_PORT = 8642
+
+CUSTOM_PROVIDER_ENV = {
+    "gorouter": "GOROUTER_API_KEY",
+    "iamhc": "IAMHC_API_KEY",
+    "hcnsec": "HCNSEC_API_KEY",
+    "lyclaude": "LYCLAUDE_API_KEY",
+    "vyceai": "VYCEAI_API_KEY",
+    "moleapi": "MOLEAPI_API_KEY",
+    "nararouter": "NARAROUTER_API_KEY",
+    "zenmux": "ZENMUX_API_KEY",
+}
+SECRET_NAME_RE = re.compile(
+    r"(?:API_KEY|API_TOKEN|TOKEN|SECRET|PASSWORD|PASSPHRASE)$", re.IGNORECASE
+)
 
 app = modal.App(APP_NAME)
 
@@ -24,6 +40,7 @@ hermes_secrets = [
         modal.Secret.from_name("circlecicli"),
     modal.Secret.from_name("OPENROUTER"),
     modal.Secret.from_name("iamhc"),
+    modal.Secret.from_name("hermes-provider-keys"),
     modal.Secret.from_name("modal_proxy_tokens"),
     modal.Secret.from_name("searxng"),
 ]
@@ -69,7 +86,7 @@ hermes_image = (
 )
 
 def build_runtime_environment() -> dict[str, str]:
-    """Build the runtime environment and persist selected variables."""
+    """Build the runtime environment without persisting credentials."""
     env = os.environ.copy()
     env["HERMES_HOME"] = HERMES_HOME
     env["TERMINAL_CWD"] = f"{HERMES_HOME}/workspaces"
@@ -93,37 +110,59 @@ def build_runtime_environment() -> dict[str, str]:
 
     os.makedirs(HERMES_HOME, exist_ok=True)
     os.makedirs(os.path.join(HERMES_HOME, "workspaces"), exist_ok=True)
+    scrub_persisted_secrets()
 
-    env_path = os.path.join(HERMES_HOME, ".env")
-    temporary_path = f"{env_path}.tmp.{os.getpid()}"
-
-    excluded_names = {
-        "PATH",
-        "PWD",
-        "HOME",
-        "HOSTNAME",
-        "SHLVL",
-        "_",
-        "CIRCLECI_CLI_TOKEN",
-    }
-
-    with open(temporary_path, "w", encoding="utf-8") as env_file:
-        os.chmod(temporary_path, 0o600)
-
-        for name, value in sorted(env.items()):
-            if (name.startswith("MODAL_") and not name.startswith("MODAL_PROXY_TOKEN_")) or name in excluded_names:
+    config_path = os.path.join(HERMES_HOME, "config.yaml")
+    if os.path.isfile(config_path):
+        with open(config_path, encoding="utf-8") as handle:
+            config = yaml.safe_load(handle) or {}
+        changed = False
+        for provider in config.get("custom_providers", []) or []:
+            if not isinstance(provider, dict):
                 continue
-
-            normalized_value = value.replace("\r", "\\r").replace("\n", "\\n")
-            env_file.write(f"{name}={normalized_value}\n")
-
-        env_file.flush()
-        os.fsync(env_file.fileno())
-
-    os.replace(temporary_path, env_path)
-    os.chmod(env_path, 0o600)
+            name = str(provider.get("name", "")).strip().lower()
+            env_name = CUSTOM_PROVIDER_ENV.get(name)
+            if env_name and provider.get("api_key"):
+                provider.pop("api_key", None)
+                provider["key_env"] = env_name
+                changed = True
+        if changed:
+            temporary_path = f"{config_path}.tmp.{os.getpid()}"
+            with open(temporary_path, "w", encoding="utf-8") as handle:
+                os.chmod(temporary_path, 0o600)
+                yaml.safe_dump(config, handle, sort_keys=False, allow_unicode=True)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary_path, config_path)
+            os.chmod(config_path, 0o600)
 
     return env
+
+
+def scrub_persisted_secrets() -> None:
+    """Remove credentials left by older deployments from the shared volume."""
+    paths = [
+        os.path.join(HERMES_HOME, ".env"),
+        os.path.join(HERMES_HOME, "profiles", "trader", ".env"),
+        os.path.join(HERMES_HOME, "profiles", "hazem", ".env"),
+        os.path.join(HERMES_HOME, "profiles", "projectsentinelsupport", ".env"),
+    ]
+    for path in paths:
+        if not os.path.isfile(path):
+            continue
+        with open(path, encoding="utf-8") as handle:
+            kept = []
+            for line in handle:
+                name = line.split("=", 1)[0].strip()
+                if name and SECRET_NAME_RE.search(name):
+                    continue
+                kept.append(line)
+        temporary_path = f"{path}.tmp.{os.getpid()}"
+        with open(temporary_path, "w", encoding="utf-8") as handle:
+            os.chmod(temporary_path, 0o600)
+            handle.writelines(kept)
+        os.replace(temporary_path, path)
+        os.chmod(path, 0o600)
 
 @app.function(
     image=hermes_image,

@@ -22,6 +22,7 @@ hermes_secrets = [
     modal.Secret.from_name("github-secret"),
     modal.Secret.from_name("OPENROUTER"),
     modal.Secret.from_name("iamhc"),
+    modal.Secret.from_name("hermes-provider-keys"),
     modal.Secret.from_name("nabeh-agent"),
     modal.Secret.from_name("modal_proxy_tokens"),
     modal.Secret.from_name("searxng"),
@@ -67,7 +68,7 @@ hermes_image = (
 )
 
 def build_runtime_environment() -> dict[str, str]:
-    """Build the runtime environment and persist selected variables."""
+    """Build the runtime environment without persisting credentials."""
     env = os.environ.copy()
     env["HERMES_HOME"] = HERMES_HOME
     env["TERMINAL_CWD"] = f"{HERMES_HOME}/workspaces"
@@ -91,34 +92,6 @@ def build_runtime_environment() -> dict[str, str]:
 
     os.makedirs(HERMES_HOME, exist_ok=True)
     os.makedirs(os.path.join(HERMES_HOME, "workspaces"), exist_ok=True)
-
-    env_path = os.path.join(HERMES_HOME, ".env")
-    temporary_path = f"{env_path}.tmp.{os.getpid()}"
-
-    excluded_names = {
-        "PATH",
-        "PWD",
-        "HOME",
-        "HOSTNAME",
-        "SHLVL",
-        "_",
-    }
-
-    with open(temporary_path, "w", encoding="utf-8") as env_file:
-        os.chmod(temporary_path, 0o600)
-
-        for name, value in sorted(env.items()):
-            if (name.startswith("MODAL_") and not name.startswith("MODAL_PROXY_TOKEN_")) or name in excluded_names:
-                continue
-
-            normalized_value = value.replace("\r", "\\r").replace("\n", "\\n")
-            env_file.write(f"{name}={normalized_value}\n")
-
-        env_file.flush()
-        os.fsync(env_file.fileno())
-
-    os.replace(temporary_path, env_path)
-    os.chmod(env_path, 0o600)
 
     return env
 
