@@ -4,7 +4,7 @@
 
 - Store every provider credential only in the Modal Secret `hermes-provider-keys`.
 - Keep provider configuration files limited to `name`, `base_url`, `model`, `models`, and `key_env`; never store plaintext `api_key` values in `config.yaml`, `.env`, source code, runtime files, Git, or Modal Volumes.
-- Use the matching environment names: `HCNSEC_API_KEY`, `IAMHC_API_KEY`, `GOROUTER_API_KEY`, `LYCLAUDE_API_KEY`, `VYCEAI_API_KEY`, `MOLEAPI_API_KEY`, `NARAROUTER_API_KEY`, and `ZENMUX_API_KEY`.
+- Use the matching environment names for active providers: `HCNSEC_API_KEY`, `IAMHC_API_KEY`, `LYCLAUDE_API_KEY`, `VYCEAI_API_KEY`, `NARAROUTER_API_KEY`, and `ZENMUX_API_KEY`.
 - After a credential is exposed, rotate it in the provider dashboard and update the Modal Secret. Do not print, log, or inspect secret values; verify only that the variable is present.
 - Deployment scripts must bind `modal.Secret.from_name("hermes-provider-keys")` and must not persist the process environment to `$HERMES_HOME/.env` or any Volume.
 - Trader exchange credentials remain in the separate `hermes_trader_live` Secret and are injected only into the temporary live Freqtrade config; keep `dry_run=true` unless explicitly approved.

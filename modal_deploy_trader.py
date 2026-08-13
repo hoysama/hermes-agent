@@ -19,12 +19,10 @@ TRADER_RUNTIME_SOURCE = "/opt/hermes-trader-runtime"
 TRADER_SCRIPTS = os.path.join(HERMES_HOME, "profiles", "trader", "scripts")
 TRADER_STRATEGIES = os.path.join(FREQTRADE_USERDIR, "strategies")
 CUSTOM_PROVIDER_ENV = {
-    "gorouter": "GOROUTER_API_KEY",
     "iamhc": "IAMHC_API_KEY",
     "hcnsec": "HCNSEC_API_KEY",
     "lyclaude": "LYCLAUDE_API_KEY",
     "vyceai": "VYCEAI_API_KEY",
-    "moleapi": "MOLEAPI_API_KEY",
     "nararouter": "NARAROUTER_API_KEY",
     "zenmux": "ZENMUX_API_KEY",
 }
