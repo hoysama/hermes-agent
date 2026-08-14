@@ -133,13 +133,14 @@ def generate_report() -> str:
     counts = execution_counts(log)
     rejects = rejection_reasons(log)
 
-    provider = "hcnsec"
-    model = "DeepSeek-V4-Pro"
+    provider = "nararouter"
+    analysis_model = "grok-4.5"
+    decision_model = "agnes-2.5-flash"
     source_values = [d.get("decision_source") for d in decision_values]
-    if any(s == "DeepSeek-V4-Pro@hcnsec" for s in source_values):
-        provider_model = "DeepSeek-V4-Pro@hcnsec"
+    if any(s == f"{decision_model}@{provider}" for s in source_values):
+        provider_model = f"{analysis_model} analysis -> {decision_model} decisions @{provider}"
     else:
-        provider_model = f"{model}@{provider}"
+        provider_model = f"{analysis_model} analysis -> {decision_model} decisions @{provider}"
 
     realized = number((profit or {}).get("profit_closed_coin"))
     unrealized = number((profit or {}).get("profit_open_coin"))

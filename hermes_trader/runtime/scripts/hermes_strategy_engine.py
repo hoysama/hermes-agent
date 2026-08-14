@@ -508,7 +508,7 @@ Output ONLY JSON: {{"primary_regime": "<regime>", "secondary_regime": "<regime>"
                     result = parse_llm_json(raw)
                     if not valid_regime(result):
                         raise ValueError("Market regime JSON failed schema validation")
-                    result['decision_source'] = 'DeepSeek-V4-Pro@hcnsec'
+                    result['decision_source'] = f'{self.model}@nararouter'
                     self.last_regime = result
                     return result
                 except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
@@ -522,12 +522,12 @@ Output ONLY JSON: {{"primary_regime": "<regime>", "secondary_regime": "<regime>"
                         time.sleep(1)
             raise ValueError(f"Market regime failed after retry: {last_error}")
         except Exception as e:
-            print(f"  ❌ DeepSeek regime detection unavailable: {e}")
+            print(f"  ❌ {self.model} regime detection unavailable: {e}")
             return {
                 'primary_regime': 'llm_unavailable',
                 'secondary_regime': 'llm_unavailable',
                 'confidence': 0,
-                'reason_arabic': 'DeepSeek غير متاح — إيقاف التداول',
+                'reason_arabic': f'{self.model} غير متاح — إيقاف التداول',
                 'risk_level': 'extreme',
                 'decision_source': 'none'
             }
@@ -537,7 +537,7 @@ Output ONLY JSON: {{"primary_regime": "<regime>", "secondary_regime": "<regime>"
             'primary_regime': 'llm_unavailable',
             'secondary_regime': 'llm_unavailable',
             'confidence': 0,
-            'reason_arabic': 'DeepSeek غير متاح — إيقاف التداول',
+            'reason_arabic': f'{self.model} غير متاح — إيقاف التداول',
             'risk_level': 'extreme',
             'decision_source': 'none'
         }
@@ -564,18 +564,27 @@ Output ONLY JSON: {{"primary_regime": "<regime>", "secondary_regime": "<regime>"
 # ═══════════════════════════════════════════════════════════════
 
 class StrategyEngine:
-    def __init__(self, llm_url: str, llm_key: str, model: str):
+    def __init__(
+        self,
+        llm_url: str,
+        llm_key: str,
+        model: str,
+        analysis_model: str = 'grok-4.5',
+        decision_model: str = 'agnes-2.5-flash',
+    ):
         self.store = StrategyStore()
         # Keep the execution guard backed by the same persisted trade archive
         # used by the learning cycle. The controller calls this through the
         # strategy engine before every BUY decision.
         from hermes_learning_engine import HermesLearningEngine
 
-        self.learning_engine = HermesLearningEngine(llm_url, llm_key, model)
-        self.regime_detector = RegimeDetector(llm_url, llm_key, model)
+        self.learning_engine = HermesLearningEngine(llm_url, llm_key, decision_model)
+        self.regime_detector = RegimeDetector(llm_url, llm_key, analysis_model)
         self.llm_url = llm_url
         self.llm_key = llm_key
-        self.model = model
+        self.model = decision_model
+        self.analysis_model = analysis_model
+        self.decision_model = decision_model
         self.current_regime: Optional[Dict] = None
         self.active_strategies: List[StrategyDNA] = []
         self.cycle_decisions: Dict = {}
@@ -590,7 +599,7 @@ class StrategyEngine:
         
         print(f"\n  🌍 Market Regime: {primary} | Risk: {risk}")
         
-        # DeepSeek owns regime analysis. If it fails, do not ask for pair
+        # The analysis model owns regime analysis. If it fails, do not ask for pair
         # decisions and never create an order from partial/fallback output.
         if primary == 'llm_unavailable' or regime.get('decision_source') == 'none':
             decisions = {
@@ -598,7 +607,7 @@ class StrategyEngine:
                     'action': 'neutral',
                     'confidence': 0,
                     'strategy_id': 'none',
-                    'reason': 'DeepSeek unavailable - no trade',
+                    'reason': f'{self.analysis_model} unavailable - no trade',
                     'decision_source': 'none',
                     'price': data.get('price', 0),
                     'change_24h': data.get('change_24h', 0)
@@ -618,7 +627,7 @@ class StrategyEngine:
             p.get('pair'): p for p in (open_positions or [])
             if isinstance(p, dict) and p.get('pair')
         }
-        # HCNSEC is currently heavily loaded. Pace requests rather than
+        # NaraRouter may queue requests. Pace requests rather than
         # bursting 14 concurrent calls, which increases queueing and timeouts.
         for pair, data in market_data.items():
             decision = self._analyze_pair_with_strategies(
@@ -697,7 +706,7 @@ Rules:
                     decision = parse_llm_json(raw)
                     if not valid_pair_decision(decision):
                         raise ValueError("Pair decision JSON failed schema validation")
-                    decision['decision_source'] = 'DeepSeek-V4-Pro@hcnsec'
+                    decision['decision_source'] = f'{self.decision_model}@nararouter'
                     decision['price'] = data['price']
                     decision['change_24h'] = data['change_24h']
                     sid = decision.get('strategy_id', 'none')
@@ -716,12 +725,12 @@ Rules:
                         time.sleep(1)
             raise ValueError(f"Pair decision failed after retry: {last_error}")
         except Exception as e:
-            print(f"  ❌ DeepSeek unavailable for {pair}: {e}")
+            print(f"  ❌ {self.decision_model} unavailable for {pair}: {e}")
             return {
                 'action': 'neutral',
                 'confidence': 0,
                 'strategy_id': 'none',
-                'reason': 'DeepSeek unavailable - no trade',
+                'reason': f'{self.decision_model} unavailable - no trade',
                 'decision_source': 'none',
                 'llm_error': str(e),
                 'price': data['price'],
@@ -733,7 +742,7 @@ Rules:
             'action': 'neutral',
             'confidence': 0,
             'strategy_id': 'none',
-            'reason': 'DeepSeek unavailable - no trade',
+            'reason': f'{self.decision_model} unavailable - no trade',
             'decision_source': 'none',
             'price': data['price'],
             'change_24h': data['change_24h']

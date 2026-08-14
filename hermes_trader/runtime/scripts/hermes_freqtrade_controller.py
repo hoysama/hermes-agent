@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Hermes AI Freqtrade Controller v3.0 — AGGRESSIVE MODE
 Stake: 30% per trade | TP: 10% | SL: 3%
-Provider: hcnsec ONLY (DeepSeek-V4-Pro)
+Provider: nararouter (grok-4.5 analysis + agnes-2.5-flash decisions)
 """
 import json
 import requests
@@ -40,18 +40,24 @@ FREQTRADE_API = {'url': 'http://127.0.0.1:8080', 'username': 'hermes', 'password
 STATE_DIR = '/root/.hermes/profiles/trader/freqtrade'
 STATE_FILE = os.path.join(STATE_DIR, 'hermes_state.json')
 
-# HCNSEC API ONLY - User provided key
-# Pin hcnsec only. Load its configured credential; never select another provider.
-HCNSEC_BASE_URL = os.environ.get('HCNSEC_BASE_URL', 'https://api.hcnsec.cn/v1')
-HCNSEC_API_KEY = os.environ.get('HCNSEC_API_KEY', '')
-MODEL_NAME = 'DeepSeek-V4-Pro'
+# NaraRouter only. Grok analyzes the market regime; Agnes produces pair actions.
+NARAROUTER_BASE_URL = os.environ.get('NARAROUTER_BASE_URL', 'https://router.bynara.id/v1')
+NARAROUTER_API_KEY = os.environ.get('NARAROUTER_API_KEY', '')
+ANALYSIS_MODEL = 'grok-4.5'
+DECISION_MODEL = 'agnes-2.5-flash'
 
 _engine = None
 
 def get_engine() -> StrategyEngine:
     global _engine
     if _engine is None:
-        _engine = StrategyEngine(llm_url=HCNSEC_BASE_URL, llm_key=HCNSEC_API_KEY, model=MODEL_NAME)
+        _engine = StrategyEngine(
+            llm_url=NARAROUTER_BASE_URL,
+            llm_key=NARAROUTER_API_KEY,
+            model=DECISION_MODEL,
+            analysis_model=ANALYSIS_MODEL,
+            decision_model=DECISION_MODEL,
+        )
     return _engine
 
 
@@ -200,7 +206,7 @@ class HermesBrain:
         print("=" * 70)
         print(f"🧠 HERMES v3.0 AGGRESSIVE (30% stake, 10% TP)")
         print(f"   Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"   Provider: hcnsec (DeepSeek-V4-Pro)")
+        print(f"   Provider: nararouter ({ANALYSIS_MODEL} analysis -> {DECISION_MODEL} decisions)")
         print("=" * 70)
 
         can_trade, risk_reason = self.check_risk_limits()
@@ -225,10 +231,10 @@ class HermesBrain:
         regime = engine_result['regime']
         decisions = engine_result['decisions']
         
-        # Freqtrade is execution-only: if DeepSeek did not classify the market,
+        # Freqtrade is execution-only: if the analysis model did not classify the market,
         # Hermes must not submit any order.
         if regime.get('decision_source') == 'none' or regime.get('primary_regime') == 'llm_unavailable':
-            print("  ⛔ No DeepSeek market decision — execution blocked")
+            print(f"  ⛔ No {ANALYSIS_MODEL} market decision — execution blocked")
             decisions = {pair: {**d, 'action': 'neutral', 'confidence': 0} for pair, d in decisions.items()}
 
         # Phase 3: Positions
