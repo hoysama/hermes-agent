@@ -1,6 +1,7 @@
 #!/bin/bash
 # Hermes AI Trading Cron Job
-# Runs every 5 minutes: Setup -> Check Freqtrade -> Execute Cycle -> Report
+# Runs every 3 minutes. Entry analysis runs every 20 minutes; exit review runs
+# every 3 minutes for open positions only.
 
 set -euo pipefail
 
@@ -105,7 +106,18 @@ fi
 # five-minute lock forever or suppress every later report.
 cd "$SCRIPTS_DIR"
 set +e
-timeout --foreground 900s python3 -u hermes_freqtrade_controller.py --cycle >> "$LOG_FILE" 2>&1
+minute=$(date +%M)
+if [ "$((10#$minute % 20))" -eq 0 ]; then
+    cycle_mode="entry"
+else
+    cycle_mode="exit"
+fi
+echo "Cycle mode: $cycle_mode" >> "$LOG_FILE"
+if [ "$cycle_mode" = "entry" ]; then
+    timeout --foreground 900s python3 -u hermes_freqtrade_controller.py --cycle >> "$LOG_FILE" 2>&1
+else
+    timeout --foreground 300s python3 -u hermes_freqtrade_controller.py --exit-review >> "$LOG_FILE" 2>&1
+fi
 cycle_status=$?
 set -e
 

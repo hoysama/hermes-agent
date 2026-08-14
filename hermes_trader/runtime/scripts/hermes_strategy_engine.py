@@ -578,7 +578,7 @@ class StrategyEngine:
         llm_url: str,
         llm_key: str,
         model: str,
-        analysis_model: str = 'stepfun-3.7-flash',
+        analysis_model: str = 'deepseek-v4-flash-free',
         decision_model: str = 'agnes-2.5-flash',
     ):
         self.store = StrategyStore()
@@ -649,6 +649,25 @@ class StrategyEngine:
 
         self.cycle_decisions = decisions
         return {'regime': regime, 'strategies': [s.id for s in self.active_strategies], 'decisions': decisions}
+
+    def analyze_open_positions(self, market_data: Dict, positions: List[Dict]) -> Dict:
+        """Analyze only open positions for HOLD/SELL; never produces entry work."""
+        self.active_strategies = self.store.get_best_for_regime('range_bound', top_n=3)
+        decisions = {}
+        for position in positions:
+            pair = position.get('pair')
+            if not pair or pair not in market_data:
+                continue
+            decisions[pair] = self._analyze_pair_with_strategies(
+                pair, market_data[pair], market_data, 'exit_review', position
+            )
+        return {
+            'regime': {
+                'primary_regime': 'exit_review', 'risk_level': 'medium',
+                'decision_source': 'exit_review',
+            },
+            'decisions': decisions,
+        }
     
     def _analyze_pair_with_strategies(self, pair: str, data: Dict, all_data: Dict, regime: str, position: Optional[Dict] = None) -> Dict:
         import requests

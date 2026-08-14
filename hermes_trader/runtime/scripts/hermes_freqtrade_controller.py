@@ -40,10 +40,10 @@ FREQTRADE_API = {'url': 'http://127.0.0.1:8080', 'username': 'hermes', 'password
 STATE_DIR = '/root/.hermes/profiles/trader/freqtrade'
 STATE_FILE = os.path.join(STATE_DIR, 'hermes_state.json')
 
-# NaraRouter only. StepFun analyzes first; Agnes produces pair decisions.
+# NaraRouter only. DeepSeek analyzes first; Agnes produces pair decisions.
 NARAROUTER_BASE_URL = os.environ.get('NARAROUTER_BASE_URL', 'https://router.bynara.id/v1')
 NARAROUTER_API_KEY = os.environ.get('NARAROUTER_API_KEY', '')
-ANALYSIS_MODEL = 'stepfun-3.7-flash'
+ANALYSIS_MODEL = 'deepseek-v4-flash-free'
 DECISION_MODEL = 'agnes-2.5-flash'
 
 _engine = None
@@ -201,6 +201,85 @@ class HermesBrain:
         except Exception as e:
             print(f"  ❌ Error selling trade #{trade_id}: {e}")
             return False
+
+    def run_exit_cycle(self) -> Dict:
+        """Review open positions frequently without opening new positions."""
+        print("=" * 70)
+        print(f"🔍 HERMES EXIT REVIEW | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"   Provider: nararouter ({DECISION_MODEL} exit analysis + confirmation)")
+        print("=" * 70)
+
+        positions = self.get_open_positions()
+        if not positions:
+            print("  No open positions; exit review skipped")
+            return {'status': 'exit_review_complete', 'buys': 0, 'sells': 0}
+
+        market_data = self.fetch_market_data()
+        if 'error' in market_data:
+            print("  ⛔ Market data unavailable; exit review blocked")
+            return {'status': 'market_data_unavailable', 'buys': 0, 'sells': 0}
+
+        review = self.engine.analyze_open_positions(market_data, positions)
+        decisions = review['decisions']
+        regime = review['regime']
+        executed_sells = 0
+        for position in positions:
+            pair = position.get('pair')
+            trade_id = position.get('trade_id')
+            if not pair or not trade_id:
+                continue
+            decision = decisions.get(pair, {})
+            action = decision.get('action', 'neutral')
+            confidence = decision.get('confidence', 0)
+            pnl_pct = position.get('profit_pct', 0)
+            strategy = self.engine.get_strategy(decision.get('strategy_id', 'none'))
+            take_profit = float(getattr(strategy, 'take_profit_pct', 10.0)) if strategy else 10.0
+            stop_loss = float(getattr(strategy, 'stop_loss_pct', -3.0)) if strategy else -3.0
+            age_hours = self._position_age_hours(position)
+            should_sell = False
+            reason = ''
+            if pnl_pct >= take_profit:
+                should_sell, reason = True, f"TAKE PROFIT {pnl_pct:.1f}% (target {take_profit:.1f}%)"
+            elif pnl_pct <= stop_loss:
+                should_sell, reason = True, f"STOP LOSS {pnl_pct:.1f}% (limit {stop_loss:.1f}%)"
+            elif age_hours >= CONFIG['time_stop_hours'] and pnl_pct <= 0:
+                should_sell, reason = True, f"TIME STOP {age_hours:.1f}h at {pnl_pct:.1f}%"
+            elif action == 'sell' and confidence >= 70:
+                confirmed, confirm_reason = self.engine.confirm_trade_signal(
+                    pair, decision, market_data[pair], regime.get('primary_regime', 'range_bound'), position
+                )
+                if confirmed:
+                    should_sell, reason = True, f"EXIT REVIEW SELL ({confirm_reason})"
+                else:
+                    print(f"  ⏭️ SELL skipped {pair}: confirmation rejected ({confirm_reason})")
+            if should_sell and self.execute_sell(trade_id, pair):
+                executed_sells += 1
+                pnl_dollar = (pnl_pct / 100) * position.get('stake_amount', 0)
+                strategy_id = decision.get('strategy_id', 'none')
+                if strategy_id != 'none':
+                    self.engine.record_trade_result(strategy_id, pnl_dollar, pnl_pct, age_hours)
+                self.trade_log.append({
+                    'timestamp': datetime.now().isoformat(), 'pair': pair,
+                    'action': 'sell', 'confidence': confidence,
+                    'pnl': pnl_dollar, 'pnl_pct': pnl_pct,
+                    'strategy_id': strategy_id, 'trade_id': trade_id,
+                    'sell_reason': reason, 'regime': regime.get('primary_regime', 'exit_review'),
+                })
+                self.save_state()
+        print(f"Exit review complete: SELL executed={executed_sells}")
+        return {'status': 'exit_review_complete', 'buys': 0, 'sells': executed_sells}
+
+    def _position_age_hours(self, position: Dict) -> float:
+        opened_at = position.get('open_date') or position.get('open_date_utc')
+        if not opened_at:
+            return 0.0
+        try:
+            opened = datetime.fromisoformat(str(opened_at).replace('Z', '+00:00'))
+            if opened.tzinfo is None:
+                opened = opened.replace(tzinfo=timezone.utc)
+            return max(0.0, (datetime.now(timezone.utc) - opened).total_seconds() / 3600)
+        except (TypeError, ValueError):
+            return 0.0
 
     def run_cycle(self) -> Dict:
         print("=" * 70)
@@ -442,5 +521,7 @@ if __name__ == '__main__':
     elif '--status' in sys.argv:
         status = brain.get_status()
         print(json.dumps(status, indent=2, ensure_ascii=False, default=str))
+    elif '--exit-review' in sys.argv:
+        brain.run_exit_cycle()
     else:
         brain.run_cycle()
