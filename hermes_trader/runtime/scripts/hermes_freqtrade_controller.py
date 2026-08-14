@@ -283,6 +283,12 @@ class HermesBrain:
                     if not loss_ok:
                         print(f"  ⏭️ BUY skipped {pair}: {loss_reason}")
                         continue
+                    confirmed, confirmation_reason = self.engine.confirm_trade_signal(
+                        pair, decision, market_data[pair], regime.get('primary_regime', 'unknown')
+                    )
+                    if not confirmed:
+                        print(f"  ⏭️ BUY skipped {pair}: confirmation rejected ({confirmation_reason})")
+                        continue
                     if self.open_trades_count < CONFIG['max_open_trades']:
                         strategy = self.engine.get_strategy(strategy_id)
                         if strategy:
@@ -354,8 +360,14 @@ class HermesBrain:
             sell_reason = ""
             
             if action == 'sell' and confidence >= 70:
-                should_sell = True
-                sell_reason = f"LLM sell (conf={confidence:.0f}%)"
+                confirmed, confirmation_reason = self.engine.confirm_trade_signal(
+                    pair, decision, market_data[pair], regime.get('primary_regime', 'unknown'), pos
+                )
+                if confirmed:
+                    should_sell = True
+                    sell_reason = f"LLM sell confirmed (conf={confidence:.0f}%)"
+                else:
+                    print(f"  ⏭️ SELL skipped {pair}: confirmation rejected ({confirmation_reason})")
             elif pnl_pct >= take_profit:
                 should_sell = True
                 sell_reason = f"TAKE PROFIT {pnl_pct:.1f}% (target {take_profit:.1f}%)"

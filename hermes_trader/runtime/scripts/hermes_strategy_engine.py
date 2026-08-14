@@ -88,7 +88,7 @@ def llm_diagnostics(response: requests.Response, *, stage: str, attempt: int,
     )
     preview = raw[:160].replace('\n', ' ') if raw else ''
     print(
-        f"  ❌ DeepSeek {stage} failed: http_status={response.status_code} "
+        f"  ❌ LLM {stage} failed: http_status={response.status_code} "
         f"finish_reason={finish_reason or '-'} content_length={content_length} "
         f"request_id={request_id} retry={attempt}/1 error={error!s} raw_prefix={preview!r}"
     )
@@ -759,6 +759,66 @@ Rules:
             'change_24h': data['change_24h']
         }
     
+    def confirm_trade_signal(
+        self,
+        pair: str,
+        decision: Dict,
+        data: Dict,
+        regime: str,
+        position: Optional[Dict] = None,
+    ) -> Tuple[bool, str]:
+        """Require a second Agnes response before an LLM-generated order."""
+        action = decision.get('action', 'neutral')
+        if action not in {'buy', 'sell'}:
+            return True, 'no confirmation required for neutral'
+
+        import requests
+        position_text = 'open position' if position else 'no open position'
+        prompt = f"""You are the independent trade-signal verifier for Hermes.
+Return only JSON: {{"confirm": true|false, "action": "buy"|"sell"|"neutral", "confidence": 0, "reason": "Arabic"}}
+
+Pair: {pair}; price: {data.get('price', 0):.8f}; 24h: {data.get('change_24h', 0):.2f}%
+Market regime: {regime}; position: {position_text}
+Proposed action: {action}; confidence: {decision.get('confidence', 0)}
+Proposed reason: {decision.get('reason', '')}
+Confirm only when the action is justified. Never confirm BUY for an open position.
+Keep reason under 80 characters."""
+        try:
+            res = requests.post(
+                f"{self.llm_url.rstrip('/')}/chat/completions",
+                json={
+                    'model': self.decision_model,
+                    'messages': [
+                        {'role': 'system', 'content': 'Return one compact valid JSON object only.'},
+                        {'role': 'user', 'content': prompt},
+                    ],
+                    'temperature': 0.0,
+                    'max_tokens': 160,
+                    'response_format': {'type': 'json_object'},
+                },
+                headers={'Authorization': f'Bearer {self.llm_key}', 'Content-Type': 'application/json'},
+                timeout=45,
+            )
+            if res.status_code != 200:
+                raise ValueError(f"confirmation HTTP {res.status_code}: {res.text[:160]}")
+            raw, _, _ = extract_completion(res)
+            result = parse_llm_json(raw)
+            confirmed = (
+                result.get('confirm') is True
+                and result.get('action') == action
+                and isinstance(result.get('confidence'), int)
+                and result['confidence'] >= 70
+            )
+            reason = str(result.get('reason') or 'confirmation rejected')[:120]
+            print(
+                f"  {'✅' if confirmed else '⛔'} {pair} {action.upper()} confirmation: "
+                f"{'accepted' if confirmed else 'rejected'} ({result.get('confidence', 0)}%)"
+            )
+            return confirmed, reason
+        except Exception as exc:
+            print(f"  ⛔ {pair} {action.upper()} confirmation unavailable: {exc}")
+            return False, f'confirmation unavailable: {exc}'
+
     def get_confidence_threshold(self, strategy_id: str) -> float:
         s = self.store.strategies.get(strategy_id)
         return s.min_confidence if s else 80.0
