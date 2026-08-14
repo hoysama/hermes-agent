@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Hermes AI Freqtrade Controller v3.0 — AGGRESSIVE MODE
 Stake: 30% per trade | TP: 10% | SL: 3%
-Provider: nararouter (grok-4.5 analysis + agnes-2.5-flash decisions)
+Provider: nararouter (stepfun-3.7-flash analysis + agnes-2.5-flash decisions)
 """
 import json
 import requests
@@ -40,10 +40,10 @@ FREQTRADE_API = {'url': 'http://127.0.0.1:8080', 'username': 'hermes', 'password
 STATE_DIR = '/root/.hermes/profiles/trader/freqtrade'
 STATE_FILE = os.path.join(STATE_DIR, 'hermes_state.json')
 
-# NaraRouter only. Grok analyzes the market regime; Agnes produces pair actions.
+# NaraRouter only. StepFun analyzes first; Agnes produces pair decisions.
 NARAROUTER_BASE_URL = os.environ.get('NARAROUTER_BASE_URL', 'https://router.bynara.id/v1')
 NARAROUTER_API_KEY = os.environ.get('NARAROUTER_API_KEY', '')
-ANALYSIS_MODEL = 'grok-4.5'
+ANALYSIS_MODEL = 'stepfun-3.7-flash'
 DECISION_MODEL = 'agnes-2.5-flash'
 
 _engine = None

@@ -449,10 +449,11 @@ class RegimeDetector:
         'breakout', 'crash', 'recovery'
     ]
     
-    def __init__(self, llm_url: str, llm_key: str, model: str):
+    def __init__(self, llm_url: str, llm_key: str, model: str, fallback_model: str = 'agnes-2.5-flash'):
         self.llm_url = llm_url
         self.llm_key = llm_key
         self.model = model
+        self.fallback_model = fallback_model
         self.last_regime = None
     
     def detect(self, market_data: Dict) -> Dict:
@@ -480,64 +481,72 @@ Market Regime Detection:
 Output only the JSON object. Do not explain your reasoning. Keep reason_arabic under 80 characters.
 Output ONLY JSON: {{"primary_regime": "<regime>", "secondary_regime": "<regime>", "confidence": <int>, "reason_arabic": "<Arabic reason>", "risk_level": "<low|medium|high|extreme>"}}"""
 
-        try:
-            last_error = None
-            for attempt in range(2):
-                raw = ''
-                finish_reason = ''
-                content_length = 0
-                res = requests.post(
-                    f"{self.llm_url.rstrip('/')}/chat/completions",
-                    json={
-                        'model': self.model,
-                        'messages': [
-                            {'role': 'system', 'content': 'Return exactly one compact valid JSON object. No reasoning, Markdown, or text outside JSON. Keep reason_arabic under 80 characters.'},
-                            {'role': 'user', 'content': prompt},
-                        ],
-                        'temperature': 0.2,
-                    'max_tokens': 500,
-                        'response_format': {'type': 'json_object'},
-                    },
-                    headers={'Authorization': f'Bearer {self.llm_key}', 'Content-Type': 'application/json'},
-                    timeout=45,
-                )
-                try:
-                    if res.status_code != 200:
-                        raise ValueError(f"LLM HTTP {res.status_code}: {res.text[:200]}")
-                    raw, finish_reason, content_length = extract_completion(res)
-                    result = parse_llm_json(raw)
-                    if not valid_regime(result):
-                        raise ValueError("Market regime JSON failed schema validation")
-                    result['decision_source'] = f'{self.model}@nararouter'
-                    self.last_regime = result
-                    return result
-                except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
-                    last_error = exc
-                    llm_diagnostics(
-                        res, stage='market regime', attempt=attempt,
-                        finish_reason=finish_reason, content_length=content_length,
-                        error=exc, raw=raw,
+        models = [self.model] + ([self.fallback_model] if self.fallback_model else [])
+        failures = []
+        for model in models:
+            try:
+                last_error = None
+                for attempt in range(2):
+                    raw = ''
+                    finish_reason = ''
+                    content_length = 0
+                    res = requests.post(
+                        f"{self.llm_url.rstrip('/')}/chat/completions",
+                        json={
+                            'model': model,
+                            'messages': [
+                                {'role': 'system', 'content': 'Return exactly one compact valid JSON object. No reasoning, Markdown, or text outside JSON. Keep reason_arabic under 80 characters.'},
+                                {'role': 'user', 'content': prompt},
+                            ],
+                            'temperature': 0.2,
+                            'max_tokens': 500,
+                            'response_format': {'type': 'json_object'},
+                        },
+                        headers={'Authorization': f'Bearer {self.llm_key}', 'Content-Type': 'application/json'},
+                        timeout=45,
                     )
-                    if attempt == 0:
-                        time.sleep(1)
-            raise ValueError(f"Market regime failed after retry: {last_error}")
-        except Exception as e:
-            print(f"  ❌ {self.model} regime detection unavailable: {e}")
-            return {
-                'primary_regime': 'llm_unavailable',
-                'secondary_regime': 'llm_unavailable',
-                'confidence': 0,
-                'reason_arabic': f'{self.model} غير متاح — إيقاف التداول',
-                'risk_level': 'extreme',
-                'decision_source': 'none'
-            }
-        
-        # No rule-based regime fallback: DeepSeek owns analysis.
+                    try:
+                        if res.status_code != 200:
+                            raise ValueError(f"LLM HTTP {res.status_code}: {res.text[:200]}")
+                        raw, finish_reason, content_length = extract_completion(res)
+                        result = parse_llm_json(raw)
+                        if not valid_regime(result):
+                            raise ValueError("Market regime JSON failed schema validation")
+                        result['decision_source'] = f'{model}@nararouter'
+                        result['analysis_model'] = model
+                        self.last_regime = result
+                        return result
+                    except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+                        last_error = exc
+                        llm_diagnostics(
+                            res, stage='market regime', attempt=attempt,
+                            finish_reason=finish_reason, content_length=content_length,
+                            error=exc, raw=raw,
+                        )
+                        if attempt == 0:
+                            time.sleep(1)
+                raise ValueError(f"Market regime failed after retry: {last_error}")
+            except Exception as e:
+                failures.append(f'{model}: {e}')
+                if model != models[-1]:
+                    print(f"  ⚠️ {model} unavailable; trying {self.fallback_model}")
+        print(f"  ❌ Market regime unavailable: {' | '.join(failures)}")
         return {
             'primary_regime': 'llm_unavailable',
             'secondary_regime': 'llm_unavailable',
             'confidence': 0,
-            'reason_arabic': f'{self.model} غير متاح — إيقاف التداول',
+            'reason_arabic': 'نماذج التحليل غير متاحة — إيقاف التداول',
+            'risk_level': 'extreme',
+            'decision_source': 'none',
+            'llm_error': ' | '.join(failures),
+        }
+        
+        # No rule-based regime fallback: the configured analysis models own analysis.
+        return {
+            'primary_regime': 'llm_unavailable',
+            'secondary_regime': 'llm_unavailable',
+            'confidence': 0,
+            'reason_arabic': 'نماذج التحليل غير متاحة — إيقاف التداول',
             'risk_level': 'extreme',
             'decision_source': 'none'
         }
@@ -569,7 +578,7 @@ class StrategyEngine:
         llm_url: str,
         llm_key: str,
         model: str,
-        analysis_model: str = 'grok-4.5',
+        analysis_model: str = 'stepfun-3.7-flash',
         decision_model: str = 'agnes-2.5-flash',
     ):
         self.store = StrategyStore()
@@ -579,7 +588,9 @@ class StrategyEngine:
         from hermes_learning_engine import HermesLearningEngine
 
         self.learning_engine = HermesLearningEngine(llm_url, llm_key, decision_model)
-        self.regime_detector = RegimeDetector(llm_url, llm_key, analysis_model)
+        self.regime_detector = RegimeDetector(
+            llm_url, llm_key, analysis_model, fallback_model='agnes-2.5-flash'
+        )
         self.llm_url = llm_url
         self.llm_key = llm_key
         self.model = decision_model
