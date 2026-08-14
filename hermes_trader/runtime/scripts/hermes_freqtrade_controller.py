@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Hermes AI Freqtrade Controller v3.0 — AGGRESSIVE MODE
 Stake: 30% per trade | TP: 10% | SL: 3%
-Provider: nararouter (stepfun-3.7-flash analysis + agnes-2.5-flash decisions)
+Provider: nararouter (deepseek-v4-flash-free analysis + agnes-2.5-flash decisions)
 """
 import json
 import requests
