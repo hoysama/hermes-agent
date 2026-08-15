@@ -162,10 +162,9 @@ def generate_report() -> str:
         old_text = "غير متاح" if old is None else f"${float(old):,.2f}"
         delta_text = "غير متاح" if old is None else f"${current - float(old):+,.2f}"
         return (
-            f"{label}:\n"
-            f"  الحالي: ${current:,.2f}\n"
-            f"  السابق: {old_text}\n"
-            f"  التغير: {delta_text}"
+            f"{label}: ${current:,.2f}"
+            f"  | السابق: {old_text}"
+            f"  | التغير: {delta_text}"
         )
 
     # Preserve the user's comparative report state, but never use it as execution truth.
@@ -188,7 +187,7 @@ def generate_report() -> str:
     lines.append(f"🧠 Provider/model: {provider_model}")
     lines.append("")
 
-    lines.append("🧠 قرارات Hermes — ليست صفقات منفذة")
+    lines.append("🧠 قرارات Hermes (إشارات وليست صفقات منفذة)")
     lines.append(f"BUY: {buy_decisions} | SELL: {sell_decisions} | NEUTRAL: {neutral_decisions}")
     lines.append("")
 
@@ -214,11 +213,9 @@ def generate_report() -> str:
         lines.append("نتيجة التنفيذ: لا توجد محاولة BUY/SELL في آخر دورة")
 
     lines.append("")
-    lines.append("💼 Freqtrade Balance/PnL")
-    lines.append(comparison("متاح USDT", available, "available"))
-    lines.append(comparison("مستخدم في الصفقات", used, "used"))
-    lines.append(comparison("قيمة الحساب", total_capital, "total_capital"))
-    lines.append(comparison("الكلي", total_profit, "total_profit"))
+    lines.append("💼 الرصيد والأداء")
+    lines.append(comparison("💵 الرصيد المتاح USDT", available, "available"))
+    lines.append(comparison("📈 صافي الربح/الخسارة", total_profit, "total_profit"))
 
     lines.append("")
     lines.append(f'📦 عدد الصفقات المفتوحة: {len(live_trades)}')
@@ -235,7 +232,10 @@ def generate_report() -> str:
     if any("maximum open trades" in r.lower() for r in rejects):
         blocked.append("max_open_trades")
     lines.append("")
-    lines.append(f"⛔ سبب منع التداول: {', '.join(dict.fromkeys(blocked)) if blocked else 'لا يوجد منع مثبت في آخر دورة'}")
+    if blocked:
+        lines.append(f"⛔ حالة الدورة: منع التداول — {', '.join(dict.fromkeys(blocked))}")
+    else:
+        lines.append("✅ حالة الدورة: لا يوجد منع مسجل")
     lines.append("━" * 34)
     return "\n".join(lines)
 
