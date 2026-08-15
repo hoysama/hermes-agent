@@ -24,6 +24,7 @@ CUSTOM_PROVIDER_ENV = {
     "lyclaude": "LYCLAUDE_API_KEY",
     "vyceai": "VYCEAI_API_KEY",
     "nararouter": "NARAROUTER_API_KEY",
+    "modernrouter": "MODERNROUTER_API_KEY",
     "zenmux": "ZENMUX_API_KEY",
 }
 

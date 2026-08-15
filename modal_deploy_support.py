@@ -1,11 +1,22 @@
 import os
 import subprocess
 import modal
+import yaml
 APP_NAME = "hermes-support-api-server"
 HERMES_ROOT = "/workspace/hermes-agent"
 HERMES_HOME = "/root/.hermes"
 
 GATEWAY_PORT = 8642
+
+CUSTOM_PROVIDER_ENV = {
+    "iamhc": "IAMHC_API_KEY",
+    "hcnsec": "HCNSEC_API_KEY",
+    "lyclaude": "LYCLAUDE_API_KEY",
+    "vyceai": "VYCEAI_API_KEY",
+    "nararouter": "NARAROUTER_API_KEY",
+    "modernrouter": "MODERNROUTER_API_KEY",
+    "zenmux": "ZENMUX_API_KEY",
+}
 
 app = modal.App(APP_NAME)
 
@@ -92,6 +103,23 @@ def build_runtime_environment() -> dict[str, str]:
 
     os.makedirs(HERMES_HOME, exist_ok=True)
     os.makedirs(os.path.join(HERMES_HOME, "workspaces"), exist_ok=True)
+
+    config_path = os.path.join(HERMES_HOME, "config.yaml")
+    if os.path.isfile(config_path):
+        with open(config_path, encoding="utf-8") as handle:
+            config = yaml.safe_load(handle) or {}
+        changed = False
+        for provider in config.get("custom_providers", []) or []:
+            if not isinstance(provider, dict):
+                continue
+            env_name = CUSTOM_PROVIDER_ENV.get(str(provider.get("name", "")).strip().lower())
+            if env_name and provider.get("api_key"):
+                provider.pop("api_key", None)
+                provider["key_env"] = env_name
+                changed = True
+        if changed:
+            with open(config_path, "w", encoding="utf-8") as handle:
+                yaml.safe_dump(config, handle, sort_keys=False, allow_unicode=True)
 
     return env
 
