@@ -1157,6 +1157,243 @@ main conversation's message-role alternation stays intact.
 
 ---
 
+## Modal Trader Operations
+
+The Hermes Trader deployment runs on Modal as the app
+`hermes-trader-gateway-server`. The deployment source is
+`modal_deploy_trader.py`; Trader runtime scripts are mounted from
+`hermes_trader/runtime/scripts/`. The Trader uses the persistent
+`hermes-storage` volume for Freqtrade state and Hermes state. Never delete or
+replace that volume while investigating a deployment.
+
+### Safety invariants
+
+- Trader must remain in Freqtrade `dry_run` unless the user explicitly asks
+  for a real-trading change. Verify `dry_run: true` after every deployment or
+  rollover.
+- Do not print or expose `HCNSEC_API_KEY`, `NARAROUTER_API_KEY`, OKX keys, or
+  any other secret. When checking injection, print only presence and length.
+- Do not use `git reset --hard`, `git checkout --`, or destructive Modal
+  commands while diagnosing Trader state.
+- A Modal container ID and Hermes cron job ID are runtime values. Discover them
+  with the commands below; never assume an old ID is still active.
+- `modal deploy` rebuilds and publishes the Trader image. `modal app rollover`
+  replaces runtime containers without changing source code. Use rollover for a
+  secret-only refresh and deploy after source changes.
+
+### Discover the runtime
+
+Run these from the repository root. Prefer the repository virtual environment:
+
+```bash
+venv/bin/modal container list
+venv/bin/modal app list
+```
+
+The Trader row has an app name and a container ID such as
+`ta-...`. Save the current ID in a shell variable for subsequent commands:
+
+```bash
+TRADER_CONTAINER="<current-trader-container-id>"
+```
+
+If a container has terminated, `modal container exec` will fail; refresh the
+list and use the new active container ID.
+
+### Inspect Modal logs
+
+Use the app name, not a stale container ID, for application logs:
+
+```bash
+venv/bin/modal app logs hermes-trader-gateway-server \
+  --tail 500 --since 60m --timestamps
+```
+
+Narrow logs while diagnosing model or cycle failures:
+
+```bash
+venv/bin/modal app logs hermes-trader-gateway-server \
+  --tail 500 --since 60m --timestamps \
+  --search 'Cycle mode|EXIT REVIEW|DeepSeek|StepFun|agnes|LLM HTTP|429|503|timeout|dry_run|Cycle completed'
+```
+
+Typical meanings:
+
+- `HTTP 429` means the provider request-per-minute limit was reached; it is
+  not a daily-token or API-key error.
+- `HTTP 503` means the upstream model service was unavailable.
+- `finish_reason=length` with empty content means the response exhausted its
+  output limit and must be treated as an invalid model response.
+- `LLM unavailable` is a safety state. Inspect the preceding provider error;
+  do not infer that the whole cycle failed from that label alone.
+
+### Inspect the deployed Trader
+
+Use `modal container exec` for files and non-secret runtime checks:
+
+```bash
+venv/bin/modal container exec "$TRADER_CONTAINER" -- sh -lc \
+  'grep -n "ANALYSIS_MODEL\|DECISION_MODEL\|dry_run" \
+   /root/.hermes/profiles/trader/scripts/hermes_freqtrade_controller.py \
+   /root/.hermes/profiles/trader/freqtrade/config/config.json'
+```
+
+Check secret injection without exposing the secret value:
+
+```bash
+venv/bin/modal container exec "$TRADER_CONTAINER" -- sh -lc \
+  'python - <<"PY"
+import os
+for name in ("NARAROUTER_API_KEY", "HCNSEC_API_KEY"):
+    value = os.environ.get(name, "")
+    print(name, "present" if value else "missing", "length=" + str(len(value)))
+PY'
+```
+
+Check the current Freqtrade mode:
+
+```bash
+venv/bin/modal container exec "$TRADER_CONTAINER" -- sh -lc \
+  'grep -n "dry_run\|dry_run_wallet" \
+   /root/.hermes/profiles/trader/freqtrade/config/config.json'
+```
+
+The expected result is `dry_run: true`. A real exchange order must never be
+assumed from a Freqtrade `forceenter` or `forcesell` log while dry-run is on;
+those are simulated orders.
+
+### Read the latest Trader reports
+
+The no-agent Cron script writes reports to:
+
+```text
+/root/.hermes/profiles/trader/cron_output.log
+```
+
+Extract the latest ten reports without printing the whole log:
+
+```bash
+venv/bin/modal container exec "$TRADER_CONTAINER" -- sh -lc \
+  'python - <<"PY"
+import re
+text = open("/root/.hermes/profiles/trader/cron_output.log", errors="replace").read()
+reports = text.split("🤖 Hermes Trading Report | ")[1:]
+for report in reports[-10:]:
+    lines = report.splitlines()
+    timestamp = lines[0] if lines else "?"
+    decisions = next((x.strip() for x in lines if re.match(r"BUY: \\d+ \\| SELL:", x.strip())), "-")
+    execution = next((x.strip() for x in lines if x.startswith("نتيجة التنفيذ:")), "-")
+    opened = next((x.strip() for x in lines if x.startswith("📦 عدد الصفقات")), "-")
+    reason = next((x.strip() for x in lines if x.startswith("⛔ سبب منع")), "-")
+    print(f"{timestamp} | {decisions} | {execution} | {opened} | {reason}")
+PY'
+```
+
+The report's `last_decisions` may come from the last entry-analysis state and
+must not be mistaken for a fresh exit-review result. Entry and exit reports
+should eventually expose separate counts such as `BUY`, `HOLD`, `SELL
+candidates`, `SELL confirmed`, and `SELL executed`.
+
+Inspect the persisted state and its timestamp:
+
+```bash
+venv/bin/modal container exec "$TRADER_CONTAINER" -- sh -lc \
+  'python - <<"PY"
+import json
+p = "/root/.hermes/profiles/trader/freqtrade/hermes_state.json"
+state = json.load(open(p))
+print("last_update:", state.get("last_update"))
+print("last_regime:", state.get("last_regime"))
+print("decision_count:", len(state.get("last_decisions", {})))
+PY'
+```
+
+### Inspect and edit Trader Cron
+
+List jobs from inside the Trader profile:
+
+```bash
+venv/bin/modal container exec "$TRADER_CONTAINER" -- sh -lc \
+  'hermes -p trader cron list'
+```
+
+The main job is named `Hermes AI Trading Cycle` and runs the no-agent script
+`run_trading_cycle.sh`. Discover its current job ID from `cron list`; then edit
+the schedule using that ID:
+
+```bash
+venv/bin/modal container exec "$TRADER_CONTAINER" -- sh -lc \
+  'hermes -p trader cron edit <job-id> --schedule "*/3 * * * *"'
+```
+
+The current Trader design uses one Cron invocation every three minutes. The
+script selects entry versus exit mode: entry analysis is intended for the
+20-minute cadence, while open-position exit review runs every three minutes.
+Do not rely on `minute % 20 == 0` alone when the outer Cron period does not
+land on every twentieth minute; persist the last entry-cycle timestamp or use
+separate Cron jobs when exact 20-minute timing is required.
+
+Run a job once for diagnosis only after checking that it will not duplicate a
+currently running cycle:
+
+```bash
+venv/bin/modal container exec "$TRADER_CONTAINER" -- sh -lc \
+  'hermes -p trader cron run <job-id>'
+```
+
+### Deploy and refresh
+
+After changing Trader source files:
+
+```bash
+venv/bin/modal deploy modal_deploy_trader.py
+```
+
+After changing only a Modal Secret, use a rollover so the new environment is
+loaded without rebuilding source:
+
+```bash
+venv/bin/modal app rollover hermes-trader-gateway-server
+```
+
+After either operation:
+
+1. Run `venv/bin/modal container list` and identify the new Trader container.
+2. Verify the deployed model names and `dry_run: true` with `modal container exec`.
+3. Inspect startup logs for Freqtrade readiness and the first cycle.
+4. Confirm that the persistent Freqtrade database and Hermes state remain
+   present on the same volume.
+
+Do not call `modal deploy` merely to change the Cron schedule; edit the Cron
+job instead. Do not call `rollover` as a substitute for deploying source
+changes.
+
+### Trader architecture and rate limits
+
+The current provider is NaraRouter. Typical model roles are:
+
+```text
+deepseek-v4-flash-free: market analysis
+agnes-2.5-flash: pair decisions and trade confirmation
+```
+
+The free plan has a provider request-per-minute limit (currently observed as
+`10 req/min`) separate from daily token allowances. Never fan out one request
+per pair without checking the provider limit. Prefer batch analysis:
+
+- One market/regime request per entry cycle.
+- One batched request for all entry pairs.
+- One batched request for all open positions during exit review.
+- Confirmation requests only for candidates that passed local risk filters.
+
+On `429`, respect `Retry-After` when supplied and defer the work to a later
+cycle instead of immediately retrying every pair. On provider failure, block
+new entries but keep local `stop_loss`, `take_profit`, and `time_stop` safety
+rules active. All Trader execution remains `dry_run` unless explicitly
+changed by the user.
+
+---
+
 ## Kanban (multi-agent work queue)
 
 Durable SQLite-backed board that lets multiple profiles / workers
