@@ -41,6 +41,7 @@ hermes_secrets = [
     modal.Secret.from_name("hermes-provider-keys"),
     modal.Secret.from_name("modal_proxy_tokens"),
     modal.Secret.from_name("searxng"),
+    modal.Secret.from_name("hermes-cloud-mail"),
 ]
 
 # صورة Hermes المجهزة بـ Bun و Node.js و gh و wrangler
