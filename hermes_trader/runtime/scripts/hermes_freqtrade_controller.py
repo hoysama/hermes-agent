@@ -329,9 +329,6 @@ class HermesBrain:
         opened_at = position.get('open_date') or position.get('open_date_utc')
         if not opened_at:
             return 0.0
-
-    def _dynamic_exit_levels(self, position, market, decision):
-        return self.engine.dynamic_exit_levels(position, market, decision)
         try:
             opened = datetime.fromisoformat(str(opened_at).replace('Z', '+00:00'))
             if opened.tzinfo is None:
@@ -339,6 +336,9 @@ class HermesBrain:
             return max(0.0, (datetime.now(timezone.utc) - opened).total_seconds() / 3600)
         except (TypeError, ValueError):
             return 0.0
+
+    def _dynamic_exit_levels(self, position, market, decision):
+        return self.engine.dynamic_exit_levels(position, market, decision)
 
     def run_cycle(self) -> Dict:
         print("=" * 70)
