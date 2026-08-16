@@ -16,6 +16,7 @@ import re
 import time
 import requests
 from datetime import datetime
+from datetime import timezone
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field, asdict
 

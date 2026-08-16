@@ -71,6 +71,7 @@ class HermesBrain:
         self.trade_log = []
         self.last_decisions = {}
         self.last_update = None
+        self.daily_rotations = []
         self.load_state()
 
     def load_state(self):
@@ -83,6 +84,7 @@ class HermesBrain:
                     self.trade_log = state.get('trade_log', [])
                     self.last_decisions = state.get('last_decisions', {})
                     self.last_update = state.get('last_update')
+                    self.daily_rotations = state.get('daily_rotations', [])
         except:
             pass
 
@@ -96,6 +98,7 @@ class HermesBrain:
                 'last_decisions': self.last_decisions,
                 'strategy_summary': self.engine.store.get_summary() if self.engine else {},
                 'last_update': datetime.now().isoformat()
+                ,'daily_rotations': self.daily_rotations[-20:]
             }
             with open(STATE_FILE, 'w') as f:
                 json.dump(state, f, indent=2, default=str)
@@ -223,6 +226,11 @@ class HermesBrain:
         decisions = review['decisions']
         regime = review['regime']
         executed_sells = 0
+        rotation = self._rotation_candidate(positions, decisions, market_data)
+        if rotation:
+            rotation_result = self._execute_rotation(rotation, positions)
+            if rotation_result.get('status') == 'completed':
+                executed_sells += 1
         for position in positions:
             pair = position.get('pair')
             trade_id = position.get('trade_id')
@@ -268,6 +276,47 @@ class HermesBrain:
                 self.save_state()
         print(f"Exit review complete: SELL executed={executed_sells}")
         return {'status': 'exit_review_complete', 'buys': 0, 'sells': executed_sells}
+
+    def _rotation_candidate(self, positions, decisions, market_data):
+        today = datetime.now(timezone.utc).date().isoformat()
+        self.daily_rotations = [r for r in self.daily_rotations if r.get('date') == today]
+        if len(self.daily_rotations) >= 2 or len(positions) < CONFIG['max_open_trades']:
+            return None
+        free = self.get_available_balance()
+        if free is not None and free >= max(20, CONFIG['stake_amount'] * 0.10):
+            return None
+        return self.engine.evaluate_asset_rotation(positions, decisions, market_data)
+
+    def _execute_rotation(self, rotation, positions):
+        from_pair = rotation['from_pair']; to_pair = rotation['to_pair']
+        trade_id = rotation.get('from_trade_id'); stake = rotation.get('stake', 0)
+        if not trade_id or stake < 20 or from_pair == to_pair:
+            return {'status': 'rejected', 'reason': 'invalid rotation'}
+        print(f"  🔄 ROTATION candidate: {from_pair} -> {to_pair} (spread {rotation['spread']:.0f}%)")
+        if not self.execute_sell(trade_id, from_pair):
+            return {'status': 'sell_failed'}
+        time.sleep(2)
+        refreshed = self.get_open_positions()
+        if any(p.get('trade_id') == trade_id for p in refreshed):
+            return {'status': 'sell_not_confirmed'}
+        balance = self.get_available_balance()
+        if balance is None:
+            return {'status': 'balance_unavailable'}
+        stake = min(stake, balance)
+        new_trade_id = self.execute_buy(to_pair, stake)
+        record = {
+            'date': datetime.now(timezone.utc).date().isoformat(),
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'from_pair': from_pair, 'to_pair': to_pair,
+            'from_trade_id': trade_id, 'new_trade_id': new_trade_id,
+            'spread': rotation['spread'], 'reason': rotation['reason'],
+            'sell_status': 'confirmed', 'buy_status': 'confirmed' if new_trade_id else 'failed',
+        }
+        self.daily_rotations.append(record)
+        self.trade_log.append({'action': 'rotation', **record})
+        self.save_state()
+        print(f"  {'✅' if new_trade_id else '⚠️'} ROTATION {'completed' if new_trade_id else 'partial'}: {from_pair} -> {to_pair}")
+        return {'status': 'completed' if new_trade_id else 'partial', **record}
 
     def _position_age_hours(self, position: Dict) -> float:
         opened_at = position.get('open_date') or position.get('open_date_utc')
