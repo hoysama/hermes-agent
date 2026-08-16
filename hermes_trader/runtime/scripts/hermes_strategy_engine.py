@@ -669,6 +669,58 @@ class StrategyEngine:
             },
             'decisions': decisions,
         }
+
+    def evaluate_asset_rotation(self, positions: List[Dict], decisions: Dict, market_data: Dict) -> Optional[Dict]:
+        """Choose a stale position only when a materially stronger entry exists."""
+        open_pairs = {p.get('pair') for p in positions}
+        stale = []
+        for position in positions:
+            pair = position.get('pair')
+            decision = decisions.get(pair, {})
+            age = self._position_age_hours(position)
+            pnl = float(position.get('profit_pct', 0) or 0)
+            if age >= 3 and -0.8 <= pnl <= 0.5 and decision.get('action') != 'buy':
+                stale.append((float(decision.get('confidence', 0) or 0), pair, position))
+
+        candidates = []
+        for pair, decision in decisions.items():
+            if pair in open_pairs or decision.get('action') != 'buy':
+                continue
+            confidence = float(decision.get('confidence', 0) or 0)
+            if confidence >= 80 and pair in market_data:
+                candidates.append((confidence, pair, decision))
+
+        if not stale or not candidates:
+            return None
+        old_confidence, old_pair, old_position = min(stale, key=lambda item: item[0])
+        new_confidence, new_pair, new_decision = max(candidates, key=lambda item: item[0])
+        spread = new_confidence - old_confidence
+        if spread < 25:
+            return None
+        return {
+            'from_pair': old_pair,
+            'from_trade_id': old_position.get('trade_id'),
+            'to_pair': new_pair,
+            'to_confidence': new_confidence,
+            'from_confidence': old_confidence,
+            'spread': spread,
+            'stake': float(old_position.get('stake_amount', 0) or 0),
+            'reason': 'OPPORTUNITY_ROTATION',
+            'decision': new_decision,
+        }
+
+    @staticmethod
+    def _position_age_hours(position: Dict) -> float:
+        opened = position.get('open_date') or position.get('open_date_utc')
+        if not opened:
+            return 0.0
+        try:
+            value = datetime.fromisoformat(str(opened).replace('Z', '+00:00'))
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=timezone.utc)
+            return max(0.0, (datetime.now(timezone.utc) - value).total_seconds() / 3600)
+        except (TypeError, ValueError):
+            return 0.0
     
     def _analyze_pair_with_strategies(self, pair: str, data: Dict, all_data: Dict, regime: str, position: Optional[Dict] = None) -> Dict:
         import requests

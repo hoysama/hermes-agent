@@ -7,6 +7,7 @@ import json
 import requests
 import sys
 import os
+import time
 from datetime import datetime, timezone
 from typing import Dict, List, Tuple, Optional
 
@@ -227,11 +228,15 @@ class HermesBrain:
         regime = review['regime']
         executed_sells = 0
         rotation = self._rotation_candidate(positions, decisions, market_data)
+        rotated_trade_id = None
         if rotation:
             rotation_result = self._execute_rotation(rotation, positions)
             if rotation_result.get('status') == 'completed':
                 executed_sells += 1
+                rotated_trade_id = rotation.get('from_trade_id')
         for position in positions:
+            if position.get('trade_id') == rotated_trade_id:
+                continue
             pair = position.get('pair')
             trade_id = position.get('trade_id')
             if not pair or not trade_id:
@@ -280,10 +285,12 @@ class HermesBrain:
     def _rotation_candidate(self, positions, decisions, market_data):
         today = datetime.now(timezone.utc).date().isoformat()
         self.daily_rotations = [r for r in self.daily_rotations if r.get('date') == today]
-        if len(self.daily_rotations) >= 2 or len(positions) < CONFIG['max_open_trades']:
+        if len(self.daily_rotations) >= 2:
             return None
         free = self.get_available_balance()
-        if free is not None and free >= max(20, CONFIG['stake_amount'] * 0.10):
+        has_open_slot = len(positions) < CONFIG['max_open_trades']
+        has_enough_free_balance = free is not None and free >= max(20, CONFIG['stake_amount'])
+        if has_open_slot and has_enough_free_balance:
             return None
         return self.engine.evaluate_asset_rotation(positions, decisions, market_data)
 
