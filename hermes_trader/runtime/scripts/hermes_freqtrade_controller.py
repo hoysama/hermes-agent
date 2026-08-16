@@ -245,9 +245,9 @@ class HermesBrain:
             action = decision.get('action', 'neutral')
             confidence = decision.get('confidence', 0)
             pnl_pct = position.get('profit_pct', 0)
-            strategy = self.engine.get_strategy(decision.get('strategy_id', 'none'))
-            take_profit = float(getattr(strategy, 'take_profit_pct', 10.0)) if strategy else 10.0
-            stop_loss = float(getattr(strategy, 'stop_loss_pct', -3.0)) if strategy else -3.0
+            levels = self._dynamic_exit_levels(position, market_data[pair], decision)
+            take_profit = levels['take_profit_pct']
+            stop_loss = levels['stop_loss_pct']
             age_hours = self._position_age_hours(position)
             should_sell = False
             reason = ''
@@ -329,6 +329,9 @@ class HermesBrain:
         opened_at = position.get('open_date') or position.get('open_date_utc')
         if not opened_at:
             return 0.0
+
+    def _dynamic_exit_levels(self, position, market, decision):
+        return self.engine.dynamic_exit_levels(position, market, decision)
         try:
             opened = datetime.fromisoformat(str(opened_at).replace('Z', '+00:00'))
             if opened.tzinfo is None:
@@ -478,9 +481,9 @@ class HermesBrain:
             strategy_id = decision.get('strategy_id', 'none')
             
             pnl_pct = pos.get('profit_pct', 0)
-            strategy = self.engine.get_strategy(strategy_id) if strategy_id != 'none' else None
-            take_profit = float(getattr(strategy, 'take_profit_pct', 10.0)) if strategy else 10.0
-            stop_loss = float(getattr(strategy, 'stop_loss_pct', -3.0)) if strategy else -3.0
+            levels = self._dynamic_exit_levels(pos, market_data[pair], decision)
+            take_profit = levels['take_profit_pct']
+            stop_loss = levels['stop_loss_pct']
             opened_at = pos.get('open_date') or pos.get('open_date_utc')
             age_hours = 0.0
             if opened_at:

@@ -898,6 +898,30 @@ Keep reason under 80 characters."""
     def get_strategy(self, strategy_id: str) -> Optional[StrategyDNA]:
         return self.store.strategies.get(strategy_id)
 
+    def dynamic_exit_levels(self, position: Dict, market: Dict, decision: Dict) -> Dict[str, float]:
+        """Derive adaptive exits from volatility, confidence, age, and regime."""
+        price = float(market.get('price', 0) or 0)
+        high = float(market.get('high_24h', 0) or 0)
+        low = float(market.get('low_24h', 0) or 0)
+        change = abs(float(market.get('change_24h', 0) or 0))
+        range_pct = ((high - low) / price * 100) if price and high >= low else 0.0
+        volatility = max(change, range_pct * 0.35, 0.5)
+        confidence = float(decision.get('confidence', 50) or 50)
+        age = self._position_age_hours(position)
+        regime = str(decision.get('regime', '')).lower()
+
+        # Wider targets for volatile/trending markets, tighter protection as a
+        # position ages. All values are bounded to prevent model-driven extremes.
+        target = max(1.5, min(8.0, volatility * 0.9 + confidence / 100 * 1.5))
+        stop = max(0.8, min(5.0, volatility * 0.55 + 0.8))
+        if 'trend' in regime or 'breakout' in regime:
+            target = min(8.0, target * 1.2)
+        if age >= 6:
+            target = max(1.5, target * 0.85)
+            stop = max(0.8, stop * 0.9)
+        return {'take_profit_pct': target, 'stop_loss_pct': -stop,
+                'volatility_pct': volatility, 'age_hours': age}
+
     def loss_guard(self, strategy_id: str, pair: str) -> tuple[bool, str]:
         return self.learning_engine.loss_guard(strategy_id, pair)
     
