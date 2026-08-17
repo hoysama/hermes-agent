@@ -450,7 +450,7 @@ class RegimeDetector:
         'breakout', 'crash', 'recovery'
     ]
     
-    def __init__(self, llm_url: str, llm_key: str, model: str, fallback_model: str = 'agnes-2.5-flash'):
+    def __init__(self, llm_url: str, llm_key: str, model: str, fallback_model: str = 'deepseek-v4-flash-free'):
         self.llm_url = llm_url
         self.llm_key = llm_key
         self.model = model
@@ -579,7 +579,8 @@ class StrategyEngine:
         llm_url: str,
         llm_key: str,
         model: str,
-        analysis_model: str = 'deepseek-v4-flash-free',
+        analysis_model: str = 'qwen-3.8-max-free',
+        analysis_fallback: str = 'deepseek-v4-flash-free',
         decision_model: str = 'agnes-2.5-flash',
     ):
         self.store = StrategyStore()
@@ -590,12 +591,13 @@ class StrategyEngine:
 
         self.learning_engine = HermesLearningEngine(llm_url, llm_key, decision_model)
         self.regime_detector = RegimeDetector(
-            llm_url, llm_key, analysis_model, fallback_model='agnes-2.5-flash'
+            llm_url, llm_key, analysis_model, fallback_model=analysis_fallback
         )
         self.llm_url = llm_url
         self.llm_key = llm_key
         self.model = decision_model
         self.analysis_model = analysis_model
+        self.analysis_fallback = analysis_fallback
         self.decision_model = decision_model
         self.current_regime: Optional[Dict] = None
         self.active_strategies: List[StrategyDNA] = []

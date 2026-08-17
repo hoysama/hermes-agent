@@ -44,7 +44,8 @@ STATE_FILE = os.path.join(STATE_DIR, 'hermes_state.json')
 # NaraRouter only. DeepSeek analyzes first; Agnes produces pair decisions.
 NARAROUTER_BASE_URL = os.environ.get('NARAROUTER_BASE_URL', 'https://router.bynara.id/v1')
 NARAROUTER_API_KEY = os.environ.get('NARAROUTER_API_KEY', '')
-ANALYSIS_MODEL = 'deepseek-v4-flash-free'
+ANALYSIS_MODEL = 'qwen-3.8-max-free'
+ANALYSIS_FALLBACK = 'deepseek-v4-flash-free'
 DECISION_MODEL = 'agnes-2.5-flash'
 
 _engine = None
@@ -57,6 +58,7 @@ def get_engine() -> StrategyEngine:
             llm_key=NARAROUTER_API_KEY,
             model=DECISION_MODEL,
             analysis_model=ANALYSIS_MODEL,
+            analysis_fallback=ANALYSIS_FALLBACK,
             decision_model=DECISION_MODEL,
         )
     return _engine
