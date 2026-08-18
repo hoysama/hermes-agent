@@ -579,8 +579,8 @@ class StrategyEngine:
         llm_url: str,
         llm_key: str,
         model: str,
-        analysis_model: str = 'qwen-3.8-max-free',
-        analysis_fallback: str = 'deepseek-v4-flash-free',
+        analysis_model: str = 'deepseek-v4-pro-free',
+        analysis_fallback: str = 'qwen-3.8-max-free',
         decision_model: str = 'agnes-2.5-flash',
     ):
         self.store = StrategyStore()
