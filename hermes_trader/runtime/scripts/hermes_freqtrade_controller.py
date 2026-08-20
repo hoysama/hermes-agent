@@ -23,7 +23,7 @@ CONFIG = {
     'stake_currency': 'USDT',
     'wallet_size': 1000,
     'max_stake_percent': 30,
-    'max_open_trades': 14,
+    'max_open_trades': 8,
     'stake_amount': 50,
     # Positions are evaluated continuously by each cycle. A long-held
     # position that is not profitable is exited rather than held forever.
@@ -31,11 +31,22 @@ CONFIG = {
     'max_daily_loss': 50,
     'max_weekly_loss': 150,
     'trading_pairs': [
-        'BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'LINK/USDT', 'AVAX/USDT',
-        'BNB/USDT', 'XRP/USDT', 'ADA/USDT', 'DOT/USDT',
-        'UNI/USDT', 'ATOM/USDT', 'LTC/USDT', 'XLM/USDT', 'ALGO/USDT'
+        'BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'XRP/USDT',
+        'BNB/USDT', 'LINK/USDT', 'ADA/USDT', 'AVAX/USDT'
     ]
 }
+
+FREQTRADE_CONFIG_PATH = '/root/.hermes/profiles/trader/freqtrade/config/config.json'
+if os.path.exists(FREQTRADE_CONFIG_PATH):
+    try:
+        with open(FREQTRADE_CONFIG_PATH, 'r') as _cfg_f:
+            _ft_cfg = json.load(_cfg_f)
+            _wl = _ft_cfg.get('exchange', {}).get('pair_whitelist', [])
+            if _wl:
+                CONFIG['trading_pairs'] = list(_wl)
+                CONFIG['max_open_trades'] = len(_wl)
+    except Exception:
+        pass
 
 FREQTRADE_API = {'url': 'http://127.0.0.1:8080', 'username': 'hermes', 'password': 'hermes123'}
 STATE_DIR = '/root/.hermes/profiles/trader/freqtrade'
@@ -108,21 +119,20 @@ class HermesBrain:
         except Exception as exc:
             print(f"Warning saving state: {exc}")
 
-    def fetch_market_data(self) -> Dict:
+    def fetch_market_data(self, extra_pairs: Optional[List[str]] = None) -> Dict:
         try:
             import ccxt
-            # Request only the configured symbols. Fetching every OKX ticker
-            # can block long enough to consume the entire Cron cycle.
+            # Request configured symbols plus any active open trade pairs
             exchange = ccxt.okx({
                 'enableRateLimit': True,
                 'timeout': 15000,
             })
-            symbols = list(CONFIG['trading_pairs'])
+            symbols = list(dict.fromkeys(list(CONFIG['trading_pairs']) + [p for p in (extra_pairs or []) if p]))
             print(f"  📡 Fetching live OKX tickers ({len(symbols)} pairs)...", flush=True)
             tickers = exchange.fetch_tickers(symbols)
             print(f"  ✅ Received {len(tickers)} OKX tickers", flush=True)
             self.market_data = {}
-            for pair in CONFIG['trading_pairs']:
+            for pair in symbols:
                 if pair in tickers:
                     ticker = tickers[pair]
                     self.market_data[pair] = {
@@ -220,7 +230,8 @@ class HermesBrain:
             print("  No open positions; exit review skipped")
             return {'status': 'exit_review_complete', 'buys': 0, 'sells': 0}
 
-        market_data = self.fetch_market_data()
+        open_pairs = [p.get('pair') for p in positions if isinstance(p, dict) and p.get('pair')]
+        market_data = self.fetch_market_data(extra_pairs=open_pairs)
         if 'error' in market_data:
             print("  ⛔ Market data unavailable; exit review blocked")
             return {'status': 'market_data_unavailable', 'buys': 0, 'sells': 0}
@@ -243,11 +254,14 @@ class HermesBrain:
             trade_id = position.get('trade_id')
             if not pair or not trade_id:
                 continue
+            pair_market = market_data.get(pair)
+            if not pair_market:
+                continue
             decision = decisions.get(pair, {})
             action = decision.get('action', 'neutral')
             confidence = decision.get('confidence', 0)
             pnl_pct = position.get('profit_pct', 0)
-            levels = self._dynamic_exit_levels(position, market_data[pair], decision)
+            levels = self._dynamic_exit_levels(position, pair_market, decision)
             take_profit = levels['take_profit_pct']
             stop_loss = levels['stop_loss_pct']
             age_hours = self._position_age_hours(position)
@@ -261,7 +275,7 @@ class HermesBrain:
                 should_sell, reason = True, f"TIME STOP {age_hours:.1f}h at {pnl_pct:.1f}%"
             elif action == 'sell' and confidence >= 70:
                 confirmed, confirm_reason = self.engine.confirm_trade_signal(
-                    pair, decision, market_data[pair], regime.get('primary_regime', 'range_bound'), position
+                    pair, decision, pair_market, regime.get('primary_regime', 'range_bound'), position
                 )
                 if confirmed:
                     should_sell, reason = True, f"EXIT REVIEW SELL ({confirm_reason})"
@@ -356,14 +370,15 @@ class HermesBrain:
 
         # Phase 1: Market Data
         print("\n📊 Phase 1: Market Analysis")
-        market_data = self.fetch_market_data()
+        positions = self.get_open_positions()
+        open_pairs = [p.get('pair') for p in positions if isinstance(p, dict) and p.get('pair')]
+        market_data = self.fetch_market_data(extra_pairs=open_pairs)
         if 'error' in market_data:
             print("  ⛔ Market data unavailable; execution blocked", flush=True)
             return {'status': 'market_data_unavailable', 'buys': 0, 'sells': 0}
 
         # Read positions before LLM analysis so each open position receives
         # explicit HOLD/SELL context rather than being treated as an entry.
-        positions = self.get_open_positions()
 
         # Phase 2: Strategy Selection
         print("\n🧬 Phase 2: Dynamic Strategy Selection")
@@ -476,6 +491,9 @@ class HermesBrain:
             trade_id = pos.get('trade_id')
             if not pair or not trade_id:
                 continue
+            pair_market = market_data.get(pair)
+            if not pair_market:
+                continue
             
             decision = decisions.get(pair, {})
             action = decision.get('action', 'neutral')
@@ -483,7 +501,7 @@ class HermesBrain:
             strategy_id = decision.get('strategy_id', 'none')
             
             pnl_pct = pos.get('profit_pct', 0)
-            levels = self._dynamic_exit_levels(pos, market_data[pair], decision)
+            levels = self._dynamic_exit_levels(pos, pair_market, decision)
             take_profit = levels['take_profit_pct']
             stop_loss = levels['stop_loss_pct']
             opened_at = pos.get('open_date') or pos.get('open_date_utc')
@@ -501,7 +519,7 @@ class HermesBrain:
             
             if action == 'sell' and confidence >= 70:
                 confirmed, confirmation_reason = self.engine.confirm_trade_signal(
-                    pair, decision, market_data[pair], regime.get('primary_regime', 'unknown'), pos
+                    pair, decision, pair_market, regime.get('primary_regime', 'unknown'), pos
                 )
                 if confirmed:
                     should_sell = True
