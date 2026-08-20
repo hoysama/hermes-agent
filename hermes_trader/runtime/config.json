@@ -21,17 +21,11 @@
       "BTC/USDT",
       "ETH/USDT",
       "SOL/USDT",
-      "LINK/USDT",
-      "AVAX/USDT",
-      "BNB/USDT",
       "XRP/USDT",
+      "BNB/USDT",
+      "LINK/USDT",
       "ADA/USDT",
-      "DOT/USDT",
-      "UNI/USDT",
-      "ATOM/USDT",
-      "LTC/USDT",
-      "XLM/USDT",
-      "ALGO/USDT"
+      "AVAX/USDT"
     ],
     "pair_blacklist": []
   },
