@@ -4,11 +4,11 @@ import subprocess
 import yaml
 import modal
 
-APP_NAME = "hermes-api-server"
+APP_NAME = "hermes-fikra-gateway-server"
 HERMES_ROOT = "/workspace/hermes-agent"
 HERMES_HOME = "/root/.hermes"
 
-GATEWAY_PORT = 8642
+GATEWAY_PORT = 8644
 
 CUSTOM_PROVIDER_ENV = {
     "hcnsec": "HCNSEC_API_KEY",
@@ -30,16 +30,12 @@ hermes_volume = modal.Volume.from_name(
 
 hermes_secrets = [
     modal.Secret.from_name("hermes-secrets"),
-    modal.Secret.from_name("telegram"),
+    modal.Secret.from_name("hermes-fikra-agent"),
     modal.Secret.from_name("cloudflare"),
-    modal.Secret.from_name("codexeverywhere"),
-        modal.Secret.from_name("github-secret"),
-        modal.Secret.from_name("circlecicli"),
-    modal.Secret.from_name("OPENROUTER"),
+    modal.Secret.from_name("github-secret"),
     modal.Secret.from_name("hermes-provider-keys"),
     modal.Secret.from_name("modal_proxy_tokens"),
     modal.Secret.from_name("searxng"),
-    modal.Secret.from_name("hermes-cloud-mail"),
 ]
 
 # صورة Hermes المجهزة بـ Bun و Node.js و gh و wrangler
@@ -87,8 +83,8 @@ def build_runtime_environment() -> dict[str, str]:
     env = os.environ.copy()
     env["HERMES_HOME"] = HERMES_HOME
     env["TERMINAL_CWD"] = f"{HERMES_HOME}/workspaces"
-    env["HERMES_AGENT_TIMEOUT_WARNING"] = "3600"  # 1 hour (3600s)
-    env["HERMES_AGENT_TIMEOUT"] = "7200"          # 2 hours (7200s)
+    env["HERMES_AGENT_TIMEOUT_WARNING"] = "3600"
+    env["HERMES_AGENT_TIMEOUT"] = "7200"
 
     if env.get("GITHUB_TOKEN"):
         token = env["GITHUB_TOKEN"]
@@ -98,8 +94,8 @@ def build_runtime_environment() -> dict[str, str]:
             env=env,
             check=False,
         )
-        subprocess.run(["git", "config", "--global", "user.name", "Hermes Agent"], env=env, check=False)
-        subprocess.run(["git", "config", "--global", "user.email", "agent@hermes.dev"], env=env, check=False)
+        subprocess.run(["git", "config", "--global", "user.name", "Hermes Fikra Agent"], env=env, check=False)
+        subprocess.run(["git", "config", "--global", "user.email", "agent@fikra-app.com"], env=env, check=False)
 
     import secrets
     if not env.get("API_SERVER_KEY") or len(env.get("API_SERVER_KEY", "")) < 16:
@@ -107,9 +103,10 @@ def build_runtime_environment() -> dict[str, str]:
 
     os.makedirs(HERMES_HOME, exist_ok=True)
     os.makedirs(os.path.join(HERMES_HOME, "workspaces"), exist_ok=True)
+    os.makedirs(os.path.join(HERMES_HOME, "profiles", "fikra"), exist_ok=True)
     scrub_persisted_secrets()
 
-    config_path = os.path.join(HERMES_HOME, "config.yaml")
+    config_path = os.path.join(HERMES_HOME, "profiles", "fikra", "config.yaml")
     if os.path.isfile(config_path):
         with open(config_path, encoding="utf-8") as handle:
             config = yaml.safe_load(handle) or {}
@@ -140,6 +137,7 @@ def scrub_persisted_secrets() -> None:
     """Remove credentials left by older deployments from the shared volume."""
     paths = [
         os.path.join(HERMES_HOME, ".env"),
+        os.path.join(HERMES_HOME, "profiles", "fikra", ".env"),
         os.path.join(HERMES_HOME, "profiles", "trader", ".env"),
         os.path.join(HERMES_HOME, "profiles", "hazem", ".env"),
         os.path.join(HERMES_HOME, "profiles", "projectsentinelsupport", ".env"),
@@ -174,11 +172,10 @@ def scrub_persisted_secrets() -> None:
     startup_timeout=120,
 )
 def api_server():
-    """Run the Hermes messaging gateway and API server."""
+    """Run the Hermes messaging gateway for Fikra Agent."""
     import os
     import subprocess
     
-    # Reload the volume to get latest config if the container was reused
     hermes_volume.reload()
     
     env = build_runtime_environment()
@@ -186,10 +183,9 @@ def api_server():
     env["API_SERVER_ENABLED"] = "true"
     env["API_SERVER_PORT"] = str(GATEWAY_PORT)
     env["API_SERVER_HOST"] = "0.0.0.0"
-    env.setdefault("TELEGRAM_ALLOWED_USERS", "*")
 
     subprocess.run(
-        ["hermes", "gateway", "run"],
+        ["hermes", "-p", "fikra", "gateway", "run"],
         env=env,
         cwd=HERMES_ROOT,
         check=True,
