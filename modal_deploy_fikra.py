@@ -16,6 +16,7 @@ CUSTOM_PROVIDER_ENV = {
     "vyceai": "VYCEAI_API_KEY",
     "nararouter": "NARAROUTER_API_KEY",
     "zenmux": "ZENMUX_API_KEY",
+    "opencode": "OPENCODE_API_KEY",
 }
 SECRET_NAME_RE = re.compile(
     r"(?:API_KEY|API_TOKEN|TOKEN|SECRET|PASSWORD|PASSPHRASE)$", re.IGNORECASE
