@@ -190,12 +190,15 @@ class HermesBrain:
         try:
             auth = (FREQTRADE_API['username'], FREQTRADE_API['password'])
             payload = {'pair': pair, 'stake_amount': stake}
-            res = requests.post(f"{FREQTRADE_API['url']}/api/v1/forceenter", auth=auth, json=payload, timeout=10)
+            res = requests.post(f"{FREQTRADE_API['url']}/api/v1/forceenter", auth=auth, json=payload, timeout=30)
             if res.status_code == 200:
                 result = res.json()
                 trade_id = result.get('trade_id')
                 print(f"  🟢 BUY {pair}: ${stake:.0f}")
                 return trade_id
+            elif "lower than stake amount" in res.text or "Available balance" in res.text:
+                print(f"  ⏭️ BUY skipped {pair}: insufficient balance in Freqtrade wallet")
+                return None
             else:
                 print(f"  ❌ BUY failed {pair}: {res.text[:100]}")
             return None
@@ -421,8 +424,16 @@ class HermesBrain:
             strategy_id = decision.get('strategy_id', 'none')
             
             if action == 'buy':
+                # Refresh live balance to avoid stale state from preceding executions
+                current_free = self.get_available_balance()
+                if current_free is not None:
+                    free_balance = current_free
                 if free_balance is None:
                     print(f"  ⏭️ BUY skipped {pair}: live balance unavailable")
+                    continue
+                min_stake = CONFIG.get('stake_amount', 20.0)
+                if free_balance < min_stake:
+                    print(f"  ⏭️ BUY skipped {pair}: insufficient balance (${free_balance:.2f} < ${min_stake:.2f})")
                     continue
                 # Freqtrade permits only one open spot position per pair. Do
                 # not turn a known duplicate into a noisy forceenter failure.
