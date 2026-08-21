@@ -24,11 +24,11 @@ CONFIG = {
     'wallet_size': 1000,
     'max_stake_percent': 30,
     'max_open_trades': 8,
-    'stake_amount': 50,
+    'stake_amount': 20,
     # Positions are evaluated continuously by each cycle. A long-held
     # position that is not profitable is exited rather than held forever.
     'time_stop_hours': 24,
-    'max_daily_loss': 50,
+    'max_daily_loss': 20,
     'max_weekly_loss': 150,
     'trading_pairs': [
         'BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'XRP/USDT',
@@ -45,6 +45,8 @@ if os.path.exists(FREQTRADE_CONFIG_PATH):
             if _wl:
                 CONFIG['trading_pairs'] = list(_wl)
                 CONFIG['max_open_trades'] = len(_wl)
+            if 'stake_amount' in _ft_cfg and isinstance(_ft_cfg['stake_amount'], (int, float)):
+                CONFIG['stake_amount'] = float(_ft_cfg['stake_amount'])
     except Exception:
         pass
 
