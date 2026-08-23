@@ -450,7 +450,7 @@ class RegimeDetector:
         'breakout', 'crash', 'recovery'
     ]
     
-    def __init__(self, llm_url: str, llm_key: str, model: str, fallback_model: str = 'deepseek-v4-flash-free'):
+    def __init__(self, llm_url: str, llm_key: str, model: str, fallback_model: str = 'agnes-2.5-flash'):
         self.llm_url = llm_url
         self.llm_key = llm_key
         self.model = model
@@ -500,7 +500,7 @@ Output ONLY JSON: {{"primary_regime": "<regime>", "secondary_regime": "<regime>"
                                 {'role': 'user', 'content': prompt},
                             ],
                             'temperature': 0.2,
-                            'max_tokens': 500,
+                            'max_tokens': 1000,
                             'response_format': {'type': 'json_object'},
                         },
                         headers={'Authorization': f'Bearer {self.llm_key}', 'Content-Type': 'application/json'},
@@ -579,8 +579,8 @@ class StrategyEngine:
         llm_url: str,
         llm_key: str,
         model: str,
-        analysis_model: str = 'deepseek-v4-pro-free',
-        analysis_fallback: str = 'qwen-3.8-max-free',
+        analysis_model: str = 'mistral-medium-3-5',
+        analysis_fallback: str = 'agnes-2.5-flash',
         decision_model: str = 'agnes-2.5-flash',
     ):
         self.store = StrategyStore()
