@@ -20,7 +20,7 @@ When adding or removing an inference provider for Hermes:
 3. **Re-deploy Active Hermes Applications**: Deploy only the active Hermes instances to Modal in order:
    - **Hermes Personal**: `modal deploy modal_deploy.py` # personal assistant for the user (نشط)
    - **Hermes Trader**: `modal deploy modal_deploy_trader.py` # dedicated crypto trader bot (نشط)
-   > ⛔ **تنبيه حاسم ومستمر:** **Hermes Support** (`modal_deploy_support.py`) و **Hermes Hazem** (`modal_deploy_hazem.py`) **معطلان صراحةً حالياً**، ويُحظر تماماً نشر أي منهما لتجنب تنشيطهما وإيقاظهما بالخطأ.
+   > ⛔ **تنبيه حاسم ومستمر:** **Hermes Support** (`modal_deploy_support.py`) و **Hermes Hazem** (`modal_deploy_hazem.py`) و **Hermes Fikra** (`modal_deploy_fikra.py`) **معطلون صراحةً حالياً**، ويُحظر تماماً نشر أي منهم لتجنب تنشيطهم وإيقاظهم بالخطأ.
 4. **Verify Provider Registration**: Ensure the new provider appears in the list of available providers by running `hermes providers list` or checking the Modal dashboard.
 
 ---

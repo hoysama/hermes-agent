@@ -579,7 +579,7 @@ class StrategyEngine:
         llm_url: str,
         llm_key: str,
         model: str,
-        analysis_model: str = 'mistral-medium-3-5',
+        analysis_model: str = 'ox-alpha-bynara',
         analysis_fallback: str = 'agnes-2.5-flash',
         decision_model: str = 'agnes-2.5-flash',
     ):

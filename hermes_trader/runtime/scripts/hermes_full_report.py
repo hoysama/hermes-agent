@@ -134,7 +134,7 @@ def generate_report() -> str:
     rejects = rejection_reasons(log)
 
     provider = "nararouter"
-    analysis_model = "mistral-medium-3-5"
+    analysis_model = "ox-alpha-bynara"
     analysis_fallback = "agnes-2.5-flash"
     decision_model = "agnes-2.5-flash"
     source_values = [d.get("decision_source") for d in decision_values]
