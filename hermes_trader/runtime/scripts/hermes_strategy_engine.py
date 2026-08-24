@@ -355,12 +355,14 @@ class StrategyStore:
         scored = []
         for s in active:
             affinity = s.get_affinity(regime)
-            if s.total_trades >= 3:
+            if affinity <= 0:
+                continue
+            if s.total_trades >= 10:
                 score = affinity * s.performance_score
             elif s.total_trades >= 1:
-                score = affinity * 50
+                score = affinity * 35
             else:
-                score = affinity * 40
+                score = affinity * 30
             scored.append((score, s))
         scored.sort(key=lambda x: x[0], reverse=True)
         return [s for _, s in scored[:top_n]]
@@ -635,6 +637,12 @@ class StrategyEngine:
         self.active_strategies = self.store.get_best_for_regime(primary, top_n=3)
         if risk in ('high', 'extreme'):
             self.active_strategies = self.active_strategies[:1]
+
+        now_iso = datetime.now().isoformat()
+        for s in self.active_strategies:
+            s.last_used_at = now_iso
+        if self.active_strategies:
+            self.store.save()
 
         decisions = {}
         open_by_pair = {
