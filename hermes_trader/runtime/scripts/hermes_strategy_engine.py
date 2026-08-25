@@ -135,7 +135,7 @@ class StrategyDNA:
     take_profit_pct: float = 10.0           # ← AGGRESSIVE: 10%
     stop_loss_pct: float = -3.0             # ← AGGRESSIVE: 3%
     trailing_stop_pct: float = 5.0
-    time_stop_hours: int = 48
+    time_stop_hours: int = 3
     min_hold_hours: int = 1
     
     # Position sizing
@@ -926,8 +926,8 @@ Keep reason under 80 characters."""
         stop = max(0.8, min(5.0, volatility * 0.55 + 0.8))
         if 'trend' in regime or 'breakout' in regime:
             target = min(8.0, target * 1.2)
-        if age >= 6:
-            target = max(1.5, target * 0.85)
+        if age >= 2:
+            target = max(1.2, target * 0.85)
             stop = max(0.8, stop * 0.9)
         return {'take_profit_pct': target, 'stop_loss_pct': -stop,
                 'volatility_pct': volatility, 'age_hours': age}

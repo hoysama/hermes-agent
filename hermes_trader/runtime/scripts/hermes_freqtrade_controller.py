@@ -27,7 +27,7 @@ CONFIG = {
     'stake_amount': 20,
     # Positions are evaluated continuously by each cycle. A long-held
     # position that is not profitable is exited rather than held forever.
-    'time_stop_hours': 24,
+    'time_stop_hours': 3,
     'max_daily_loss': 20,
     'max_weekly_loss': 150,
     'trading_pairs': [
@@ -276,8 +276,8 @@ class HermesBrain:
                 should_sell, reason = True, f"TAKE PROFIT {pnl_pct:.1f}% (target {take_profit:.1f}%)"
             elif pnl_pct <= stop_loss:
                 should_sell, reason = True, f"STOP LOSS {pnl_pct:.1f}% (limit {stop_loss:.1f}%)"
-            elif age_hours >= CONFIG['time_stop_hours'] and pnl_pct <= 0:
-                should_sell, reason = True, f"TIME STOP {age_hours:.1f}h at {pnl_pct:.1f}%"
+            elif age_hours >= CONFIG['time_stop_hours']:
+                should_sell, reason = True, f"TIME STOP {age_hours:.1f}h (limit {CONFIG['time_stop_hours']}h, pnl {pnl_pct:+.2f}%)"
             elif action == 'sell' and confidence >= 70:
                 confirmed, confirm_reason = self.engine.confirm_trade_signal(
                     pair, decision, pair_market, regime.get('primary_regime', 'range_bound'), position
@@ -545,9 +545,9 @@ class HermesBrain:
             elif pnl_pct <= stop_loss:
                 should_sell = True
                 sell_reason = f"STOP LOSS {pnl_pct:.1f}% (limit {stop_loss:.1f}%)"
-            elif age_hours >= CONFIG['time_stop_hours'] and pnl_pct <= 0:
+            elif age_hours >= CONFIG['time_stop_hours']:
                 should_sell = True
-                sell_reason = f"TIME STOP {age_hours:.1f}h at {pnl_pct:.1f}%"
+                sell_reason = f"TIME STOP {age_hours:.1f}h (limit {CONFIG['time_stop_hours']}h, pnl {pnl_pct:+.2f}%)"
             
             if should_sell:
                 if self.execute_sell(trade_id, pair):
