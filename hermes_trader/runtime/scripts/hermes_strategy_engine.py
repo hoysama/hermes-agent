@@ -452,11 +452,22 @@ class RegimeDetector:
         'breakout', 'crash', 'recovery'
     ]
     
-    def __init__(self, llm_url: str, llm_key: str, model: str, fallback_model: str = 'agnes-2.5-flash'):
+    def __init__(
+        self,
+        llm_url: str,
+        llm_key: str,
+        model: str = 'deepseek-v4-flash',
+        fallback_model: str = 'agnes-2.5-flash',
+        models: Optional[List[str]] = None,
+    ):
         self.llm_url = llm_url
         self.llm_key = llm_key
-        self.model = model
-        self.fallback_model = fallback_model
+        if models:
+            self.models = [m for m in models if m]
+        else:
+            self.models = [model] + ([fallback_model] if fallback_model else [])
+        self.model = self.models[0]
+        self.fallback_model = self.models[1] if len(self.models) > 1 else 'agnes-2.5-flash'
         self.last_regime = None
     
     def detect(self, market_data: Dict) -> Dict:
@@ -484,9 +495,8 @@ Market Regime Detection:
 Output only the JSON object. Do not explain your reasoning. Keep reason_arabic under 80 characters.
 Output ONLY JSON: {{"primary_regime": "<regime>", "secondary_regime": "<regime>", "confidence": <int>, "reason_arabic": "<Arabic reason>", "risk_level": "<low|medium|high|extreme>"}}"""
 
-        models = [self.model] + ([self.fallback_model] if self.fallback_model else [])
         failures = []
-        for model in models:
+        for idx, model in enumerate(self.models):
             try:
                 last_error = None
                 for attempt in range(2):
@@ -531,8 +541,9 @@ Output ONLY JSON: {{"primary_regime": "<regime>", "secondary_regime": "<regime>"
                 raise ValueError(f"Market regime failed after retry: {last_error}")
             except Exception as e:
                 failures.append(f'{model}: {e}')
-                if model != models[-1]:
-                    print(f"  ⚠️ {model} unavailable; trying {self.fallback_model}")
+                if idx + 1 < len(self.models):
+                    next_model = self.models[idx + 1]
+                    print(f"  ⚠️ {model} unavailable; trying {next_model}")
         print(f"  ❌ Market regime unavailable: {' | '.join(failures)}")
         return {
             'primary_regime': 'llm_unavailable',
@@ -580,10 +591,12 @@ class StrategyEngine:
         self,
         llm_url: str,
         llm_key: str,
-        model: str,
-        analysis_model: str = 'ox-alpha-bynara',
+        model: str = 'agnes-2.5-flash',
+        analysis_model: str = 'deepseek-v4-flash',
         analysis_fallback: str = 'agnes-2.5-flash',
         decision_model: str = 'agnes-2.5-flash',
+        analysis_models: Optional[List[str]] = None,
+        decision_models: Optional[List[str]] = None,
     ):
         self.store = StrategyStore()
         # Keep the execution guard backed by the same persisted trade archive
@@ -591,16 +604,29 @@ class StrategyEngine:
         # strategy engine before every BUY decision.
         from hermes_learning_engine import HermesLearningEngine
 
-        self.learning_engine = HermesLearningEngine(llm_url, llm_key, decision_model)
+        self.analysis_models = analysis_models or [
+            analysis_model,
+            analysis_fallback,
+            'agnes-2.0-flash',
+            'minimax-m3-free',
+        ]
+        self.decision_models = decision_models or [
+            decision_model,
+            'deepseek-v4-flash',
+            'agnes-2.0-flash',
+            'minimax-m3-free',
+        ]
+
+        self.learning_engine = HermesLearningEngine(llm_url, llm_key, self.decision_models[0])
         self.regime_detector = RegimeDetector(
-            llm_url, llm_key, analysis_model, fallback_model=analysis_fallback
+            llm_url, llm_key, models=self.analysis_models
         )
         self.llm_url = llm_url
         self.llm_key = llm_key
-        self.model = decision_model
-        self.analysis_model = analysis_model
-        self.analysis_fallback = analysis_fallback
-        self.decision_model = decision_model
+        self.model = self.decision_models[0]
+        self.analysis_model = self.analysis_models[0]
+        self.analysis_fallback = self.analysis_models[1] if len(self.analysis_models) > 1 else 'agnes-2.5-flash'
+        self.decision_model = self.decision_models[0]
         self.current_regime: Optional[Dict] = None
         self.active_strategies: List[StrategyDNA] = []
         self.cycle_decisions: Dict = {}
@@ -771,72 +797,69 @@ Rules:
 4. Write reason in ARABIC and keep it under 80 characters.
 5. Do not explain your reasoning. Return only the JSON object."""
 
-        try:
-            last_error = None
-            for attempt in range(2):
-                raw = ''
-                finish_reason = ''
-                content_length = 0
-                res = requests.post(
-                    f"{self.llm_url.rstrip('/')}/chat/completions",
-                    json={
-                        'model': self.model,
-                        'messages': [
-                            {'role': 'system', 'content': 'Return exactly one compact valid JSON object. No reasoning, Markdown, or text outside JSON. Keep reason under 80 characters.'},
-                            {'role': 'user', 'content': prompt},
-                        ],
-                        'temperature': 0.1,
-                        'max_tokens': 500,
-                        'response_format': {'type': 'json_object'},
-                    },
-                    headers={'Authorization': f'Bearer {self.llm_key}', 'Content-Type': 'application/json'},
-                    timeout=45,
-                )
-                try:
-                    if res.status_code != 200:
-                        raise ValueError(f"LLM HTTP {res.status_code}: {res.text[:200]}")
-                    raw, finish_reason, content_length = extract_completion(res)
-                    decision = parse_llm_json(raw)
-                    if not valid_pair_decision(decision):
-                        raise ValueError("Pair decision JSON failed schema validation")
-                    decision['decision_source'] = f'{self.decision_model}@nararouter'
-                    decision['price'] = data['price']
-                    decision['change_24h'] = data['change_24h']
-                    sid = decision.get('strategy_id', 'none')
-                    if sid != 'none' and sid not in self.store.strategies:
-                        decision['strategy_id'] = self.active_strategies[0].id if self.active_strategies else 'none'
-                    print(f"  🧠 {pair}: {decision['action'].upper()} | Conf: {decision.get('confidence', 0)}% | Strategy: {decision.get('strategy_id', 'none')[:20]}")
-                    return decision
-                except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
-                    last_error = exc
-                    llm_diagnostics(
-                        res, stage=f'pair decision {pair}', attempt=attempt,
-                        finish_reason=finish_reason, content_length=content_length,
-                        error=exc, raw=raw,
+        failures = []
+        for idx, model in enumerate(self.decision_models):
+            try:
+                last_error = None
+                for attempt in range(2):
+                    raw = ''
+                    finish_reason = ''
+                    content_length = 0
+                    res = requests.post(
+                        f"{self.llm_url.rstrip('/')}/chat/completions",
+                        json={
+                            'model': model,
+                            'messages': [
+                                {'role': 'system', 'content': 'Return exactly one compact valid JSON object. No reasoning, Markdown, or text outside JSON. Keep reason under 80 characters.'},
+                                {'role': 'user', 'content': prompt},
+                            ],
+                            'temperature': 0.1,
+                            'max_tokens': 500,
+                            'response_format': {'type': 'json_object'},
+                        },
+                        headers={'Authorization': f'Bearer {self.llm_key}', 'Content-Type': 'application/json'},
+                        timeout=45,
                     )
-                    if attempt == 0:
-                        time.sleep(1)
-            raise ValueError(f"Pair decision failed after retry: {last_error}")
-        except Exception as e:
-            print(f"  ❌ {self.decision_model} unavailable for {pair}: {e}")
-            return {
-                'action': 'neutral',
-                'confidence': 0,
-                'strategy_id': 'none',
-                'reason': f'{self.decision_model} unavailable - no trade',
-                'decision_source': 'none',
-                'llm_error': str(e),
-                'price': data['price'],
-                'change_24h': data['change_24h']
-            }
-        
-        # Never use a rule-based trading fallback. No DeepSeek decision = no trade.
+                    try:
+                        if res.status_code != 200:
+                            raise ValueError(f"LLM HTTP {res.status_code}: {res.text[:200]}")
+                        raw, finish_reason, content_length = extract_completion(res)
+                        decision = parse_llm_json(raw)
+                        if not valid_pair_decision(decision):
+                            raise ValueError("Pair decision JSON failed schema validation")
+                        decision['decision_source'] = f'{model}@nararouter'
+                        decision['decision_model'] = model
+                        decision['price'] = data['price']
+                        decision['change_24h'] = data['change_24h']
+                        sid = decision.get('strategy_id', 'none')
+                        if sid != 'none' and sid not in self.store.strategies:
+                            decision['strategy_id'] = self.active_strategies[0].id if self.active_strategies else 'none'
+                        print(f"  🧠 {pair}: {decision['action'].upper()} | Conf: {decision.get('confidence', 0)}% | Model: {model} | Strategy: {decision.get('strategy_id', 'none')[:20]}")
+                        return decision
+                    except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+                        last_error = exc
+                        llm_diagnostics(
+                            res, stage=f'pair decision {pair}', attempt=attempt,
+                            finish_reason=finish_reason, content_length=content_length,
+                            error=exc, raw=raw,
+                        )
+                        if attempt == 0:
+                            time.sleep(1)
+                raise ValueError(f"Pair decision failed after retry: {last_error}")
+            except Exception as e:
+                failures.append(f'{model}: {e}')
+                if idx + 1 < len(self.decision_models):
+                    next_model = self.decision_models[idx + 1]
+                    print(f"  ⚠️ {model} unavailable for {pair}; trying {next_model}")
+
+        print(f"  ❌ All decision models unavailable for {pair}: {' | '.join(failures)}")
         return {
             'action': 'neutral',
             'confidence': 0,
             'strategy_id': 'none',
-            'reason': f'{self.decision_model} unavailable - no trade',
+            'reason': 'نماذج القرار غير متاحة — لا يوجد تداول',
             'decision_source': 'none',
+            'llm_error': ' | '.join(failures),
             'price': data['price'],
             'change_24h': data['change_24h']
         }
@@ -849,7 +872,7 @@ Rules:
         regime: str,
         position: Optional[Dict] = None,
     ) -> Tuple[bool, str]:
-        """Require a second Agnes response before an LLM-generated order."""
+        """Require a second model confirmation before an LLM-generated order."""
         action = decision.get('action', 'neutral')
         if action not in {'buy', 'sell'}:
             return True, 'no confirmation required for neutral'
@@ -865,41 +888,45 @@ Proposed action: {action}; confidence: {decision.get('confidence', 0)}
 Proposed reason: {decision.get('reason', '')}
 Confirm only when the action is justified. Never confirm BUY for an open position.
 Keep reason under 80 characters."""
-        try:
-            res = requests.post(
-                f"{self.llm_url.rstrip('/')}/chat/completions",
-                json={
-                    'model': self.decision_model,
-                    'messages': [
-                        {'role': 'system', 'content': 'Return one compact valid JSON object only.'},
-                        {'role': 'user', 'content': prompt},
-                    ],
-                    'temperature': 0.0,
-                    'max_tokens': 160,
-                    'response_format': {'type': 'json_object'},
-                },
-                headers={'Authorization': f'Bearer {self.llm_key}', 'Content-Type': 'application/json'},
-                timeout=45,
-            )
-            if res.status_code != 200:
-                raise ValueError(f"confirmation HTTP {res.status_code}: {res.text[:160]}")
-            raw, _, _ = extract_completion(res)
-            result = parse_llm_json(raw)
-            confirmed = (
-                result.get('confirm') is True
-                and result.get('action') == action
-                and isinstance(result.get('confidence'), int)
-                and result['confidence'] >= 70
-            )
-            reason = str(result.get('reason') or 'confirmation rejected')[:120]
-            print(
-                f"  {'✅' if confirmed else '⛔'} {pair} {action.upper()} confirmation: "
-                f"{'accepted' if confirmed else 'rejected'} ({result.get('confidence', 0)}%)"
-            )
-            return confirmed, reason
-        except Exception as exc:
-            print(f"  ⛔ {pair} {action.upper()} confirmation unavailable: {exc}")
-            return False, f'confirmation unavailable: {exc}'
+
+        for model in self.decision_models:
+            try:
+                res = requests.post(
+                    f"{self.llm_url.rstrip('/')}/chat/completions",
+                    json={
+                        'model': model,
+                        'messages': [
+                            {'role': 'system', 'content': 'Return one compact valid JSON object only.'},
+                            {'role': 'user', 'content': prompt},
+                        ],
+                        'temperature': 0.0,
+                        'max_tokens': 160,
+                        'response_format': {'type': 'json_object'},
+                    },
+                    headers={'Authorization': f'Bearer {self.llm_key}', 'Content-Type': 'application/json'},
+                    timeout=45,
+                )
+                if res.status_code != 200:
+                    raise ValueError(f"confirmation HTTP {res.status_code}: {res.text[:160]}")
+                raw, _, _ = extract_completion(res)
+                result = parse_llm_json(raw)
+                confirmed = (
+                    result.get('confirm') is True
+                    and result.get('action') == action
+                    and isinstance(result.get('confidence'), int)
+                    and result['confidence'] >= 70
+                )
+                reason = str(result.get('reason') or 'confirmation rejected')[:120]
+                print(
+                    f"  {'✅' if confirmed else '⛔'} {pair} {action.upper()} confirmation ({model}): "
+                    f"{'accepted' if confirmed else 'rejected'} ({result.get('confidence', 0)}%)"
+                )
+                return confirmed, reason
+            except Exception as exc:
+                print(f"  ⚠️ {model} confirmation unavailable: {exc}")
+                continue
+
+        return False, 'all confirmation models unavailable'
 
     def get_confidence_threshold(self, strategy_id: str) -> float:
         s = self.store.strategies.get(strategy_id)

@@ -134,14 +134,11 @@ def generate_report() -> str:
     rejects = rejection_reasons(log)
 
     provider = "nararouter"
-    analysis_model = "ox-alpha-bynara"
+    analysis_model = "deepseek-v4-flash"
     analysis_fallback = "agnes-2.5-flash"
     decision_model = "agnes-2.5-flash"
     source_values = [d.get("decision_source") for d in decision_values]
-    if any(s == f"{decision_model}@{provider}" for s in source_values):
-        provider_model = f"{provider} {analysis_model}/{analysis_fallback} analysis -> {decision_model} decisions"
-    else:
-        provider_model = f"{provider} {analysis_model}/{analysis_fallback} analysis -> {decision_model} decisions"
+    provider_model = f"{provider} {analysis_model}/{analysis_fallback} analysis -> {decision_model} decisions"
 
     realized = number((profit or {}).get("profit_closed_coin"))
     unrealized = number((profit or {}).get("profit_open_coin"))

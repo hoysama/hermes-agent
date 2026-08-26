@@ -54,12 +54,26 @@ FREQTRADE_API = {'url': 'http://127.0.0.1:8080', 'username': 'hermes', 'password
 STATE_DIR = '/root/.hermes/profiles/trader/freqtrade'
 STATE_FILE = os.path.join(STATE_DIR, 'hermes_state.json')
 
-# NaraRouter only. ox-alpha-bynara analyzes first; Agnes produces pair decisions.
+# NaraRouter 4-tier model fallback chains (1 Primary + 3 Fallbacks)
 NARAROUTER_BASE_URL = os.environ.get('NARAROUTER_BASE_URL', 'https://router.bynara.id/v1')
 NARAROUTER_API_KEY = os.environ.get('NARAROUTER_API_KEY', '')
-ANALYSIS_MODEL = 'ox-alpha-bynara'
-ANALYSIS_FALLBACK = 'agnes-2.5-flash'
-DECISION_MODEL = 'agnes-2.5-flash'
+
+ANALYSIS_MODELS = [
+    'deepseek-v4-flash',    # Primary: 2.7s ultra-fast deep macro analysis
+    'agnes-2.5-flash',      # Fallback 1: precise & economic
+    'agnes-2.0-flash',      # Fallback 2: fast & low cost
+    'minimax-m3-free',      # Fallback 3: free safety net
+]
+
+DECISION_MODELS = [
+    'agnes-2.5-flash',      # Primary: 0.3x precise pair decisions & exit reviews
+    'deepseek-v4-flash',    # Fallback 1: deep reasoning fallback
+    'agnes-2.0-flash',      # Fallback 2: fast & low cost
+    'minimax-m3-free',      # Fallback 3: free safety net
+]
+
+ANALYSIS_MODEL = ANALYSIS_MODELS[0]
+DECISION_MODEL = DECISION_MODELS[0]
 
 _engine = None
 
@@ -71,8 +85,10 @@ def get_engine() -> StrategyEngine:
             llm_key=NARAROUTER_API_KEY,
             model=DECISION_MODEL,
             analysis_model=ANALYSIS_MODEL,
-            analysis_fallback=ANALYSIS_FALLBACK,
+            analysis_fallback=ANALYSIS_MODELS[1],
             decision_model=DECISION_MODEL,
+            analysis_models=ANALYSIS_MODELS,
+            decision_models=DECISION_MODELS,
         )
     return _engine
 
@@ -394,7 +410,7 @@ class HermesBrain:
         # Freqtrade is execution-only: if the analysis model did not classify the market,
         # Hermes must not submit any order.
         if regime.get('decision_source') == 'none' or regime.get('primary_regime') == 'llm_unavailable':
-            print(f"  ⛔ No {ANALYSIS_MODEL} market decision — execution blocked")
+            print(f"  ⛔ No analysis model market decision — execution blocked")
             decisions = {pair: {**d, 'action': 'neutral', 'confidence': 0} for pair, d in decisions.items()}
 
         # Phase 3: Positions
