@@ -41,12 +41,12 @@ CONFIG = {
     'regime_stake_multiplier': {
         'trending_up': 1.0,        # 100% — bullish
         'breakout': 1.0,           # 100% — breakout
-        'accumulation': 0.85,      # 85%  — accumulation
-        'recovery': 0.70,          # 70%  — recovery
-        'range_bound': 0.60,       # 60%  — sideways
-        'high_volatility': 0.50,   # 50%  — volatile
-        'trending_down': 0.40,     # 40%  — bearish
-        'distribution': 0.30,      # 30%  — distribution
+        'accumulation': 1.0,       # 100% — accumulation
+        'recovery': 1.0,           # 100% — recovery
+        'range_bound': 1.0,        # 100% — sideways (full allocation for smaller wallets)
+        'high_volatility': 0.70,   # 70%  — volatile
+        'trending_down': 0.50,     # 50%  — bearish
+        'distribution': 0.50,      # 50%  — distribution
         'crash': 0.0,              # 0%   — crash = no trade
     },
     # Staged Take Profit: partial exits at intermediate profit levels
@@ -664,11 +664,11 @@ class HermesBrain:
                 if free_balance is None:
                     print(f"  ⏭️ BUY skipped {pair}: live balance unavailable")
                     continue
-                min_stake = 15.0
+                min_stake = 10.0
                 effective_balance = free_balance * 0.985
                 # Regime-Aware Sizing: scale down in risky markets
                 regime_mult = CONFIG.get('regime_stake_multiplier', {}).get(
-                    regime.get('primary_regime', 'range_bound'), 0.60
+                    regime.get('primary_regime', 'range_bound'), 1.0
                 )
                 effective_balance *= regime_mult
                 if regime_mult < 1.0:

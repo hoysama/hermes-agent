@@ -106,9 +106,16 @@ fi
 # five-minute lock forever or suppress every later report.
 cd "$SCRIPTS_DIR"
 set +e
-minute=$(date +%M)
-if [ "$((10#$minute % 20))" -eq 0 ]; then
+LAST_ENTRY_FILE="$HERMES_HOME/last_entry_time"
+now_ts=$(date +%s)
+last_entry_ts=0
+if [ -f "$LAST_ENTRY_FILE" ]; then
+    last_entry_ts=$(cat "$LAST_ENTRY_FILE" 2>/dev/null || echo 0)
+fi
+# Run entry analysis every 15 minutes (900s); intermediate runs do exit reviews
+if [ $((now_ts - last_entry_ts)) -ge 900 ]; then
     cycle_mode="entry"
+    echo "$now_ts" > "$LAST_ENTRY_FILE"
 else
     cycle_mode="exit"
 fi
