@@ -204,15 +204,16 @@ class HermesBrain:
         except (requests.RequestException, ValueError, TypeError, KeyError) as exc:
             print(f"  ⚠️ Balance unavailable; blocking new entries: {exc}")
         return None
-    def execute_buy(self, pair: str, stake: float) -> Optional[int]:
+    def execute_buy(self, pair: str, stake: float = None) -> Optional[int]:
         try:
             auth = (FREQTRADE_API['username'], FREQTRADE_API['password'])
-            payload = {'pair': pair, 'stake_amount': stake}
+            payload = {'pair': pair}
             res = requests.post(f"{FREQTRADE_API['url']}/api/v1/forceenter", auth=auth, json=payload, timeout=30)
             if res.status_code == 200:
                 result = res.json()
                 trade_id = result.get('trade_id')
-                print(f"  🟢 BUY {pair}: ${stake:.0f}")
+                actual_stake = result.get('stake_amount', stake or 0)
+                print(f"  🟢 BUY {pair}: ${actual_stake:.2f} (Trade #{trade_id})")
                 return trade_id
             elif "lower than stake amount" in res.text or "Available balance" in res.text:
                 print(f"  ⏭️ BUY skipped {pair}: insufficient balance in Freqtrade wallet")
@@ -326,7 +327,7 @@ class HermesBrain:
             return None
         free = self.get_available_balance()
         has_open_slot = len(positions) < CONFIG['max_open_trades']
-        has_enough_free_balance = free is not None and free >= max(20, CONFIG['stake_amount'])
+        has_enough_free_balance = free is not None and (free * 0.985) >= min(15, CONFIG['stake_amount'])
         if has_open_slot and has_enough_free_balance:
             return None
         return self.engine.evaluate_asset_rotation(positions, decisions, market_data)
@@ -334,7 +335,7 @@ class HermesBrain:
     def _execute_rotation(self, rotation, positions):
         from_pair = rotation['from_pair']; to_pair = rotation['to_pair']
         trade_id = rotation.get('from_trade_id'); stake = rotation.get('stake', 0)
-        if not trade_id or stake < 20 or from_pair == to_pair:
+        if not trade_id or stake < 15 or from_pair == to_pair:
             return {'status': 'rejected', 'reason': 'invalid rotation'}
         print(f"  🔄 ROTATION candidate: {from_pair} -> {to_pair} (spread {rotation['spread']:.0f}%)")
         if not self.execute_sell(trade_id, from_pair):
@@ -346,7 +347,7 @@ class HermesBrain:
         balance = self.get_available_balance()
         if balance is None:
             return {'status': 'balance_unavailable'}
-        stake = min(stake, balance)
+        stake = round(min(stake, balance * 0.985), 2)
         new_trade_id = self.execute_buy(to_pair, stake)
         record = {
             'date': datetime.now(timezone.utc).date().isoformat(),
@@ -449,9 +450,10 @@ class HermesBrain:
                 if free_balance is None:
                     print(f"  ⏭️ BUY skipped {pair}: live balance unavailable")
                     continue
-                min_stake = CONFIG.get('stake_amount', 20.0)
-                if free_balance < min_stake:
-                    print(f"  ⏭️ BUY skipped {pair}: insufficient balance (${free_balance:.2f} < ${min_stake:.2f})")
+                min_stake = 15.0
+                effective_balance = free_balance * 0.985
+                if effective_balance < min_stake:
+                    print(f"  ⏭️ BUY skipped {pair}: insufficient balance (${free_balance:.2f} < ${min_stake / 0.985:.2f})")
                     continue
                 # Freqtrade permits only one open spot position per pair. Do
                 # not turn a known duplicate into a noisy forceenter failure.
@@ -490,9 +492,9 @@ class HermesBrain:
                         
                         current_exposure = sum(p.get('stake_amount', 0) for p in positions)
                         available = max_total - current_exposure - abs(self.daily_pnl)
-                        stake = min(CONFIG['stake_amount'], stake, available, free_balance)
+                        stake = round(min(CONFIG['stake_amount'], stake, available, effective_balance), 2)
                         
-                        if stake < 20:
+                        if stake < min_stake:
                             continue
 
                         trade_id = self.execute_buy(pair, stake)
