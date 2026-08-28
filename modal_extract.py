@@ -28,6 +28,7 @@ extract_image = (
         "pydantic",
     )
     .run_commands(
+        "echo 'Cache bust 1 - Update Crawl4AI (2026-08-28)'",
         "python -m playwright install --with-deps chromium",
         "crawl4ai-setup",
     )

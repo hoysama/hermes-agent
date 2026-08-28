@@ -28,6 +28,7 @@ image = (
         "zlib1g-dev",
     )
     .run_commands(
+        "echo 'Cache bust 1 - Force pulling latest SearXNG (2026-08-28)'",
         "git clone https://github.com/searxng/searxng.git /usr/local/searxng",
         "cd /usr/local/searxng && pip install -r requirements.txt && pip install -e .",
         "mkdir -p /etc/searxng",
