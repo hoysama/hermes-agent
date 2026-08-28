@@ -959,6 +959,41 @@ Keep reason under 80 characters."""
 
         return False, 'all confirmation models unavailable'
 
+    def analyze_news_disaster(self, pair: str, article_text: str) -> bool:
+        """Analyze a full article to detect disastrous news. Returns True if disaster (panic sell/abort)."""
+        import requests
+        prompt = f"""You are the Hermes News Guard.
+Analyze the following crypto news article text for {pair}.
+Determine if there is a CATASTROPHIC DISASTER that warrants an immediate panic sell or aborting a buy.
+Catastrophic disasters include: major network hacks, CEO arrests, SEC lawsuits, delisting, or bankruptcy.
+Normal price drops or bearish sentiment are NOT disasters.
+Return only JSON: {{"disaster": true|false, "reason": "Arabic rationale"}}
+
+Article Text (truncated to 2000 chars):
+{article_text[:2000]}"""
+        
+        for model in self.decision_models:
+            try:
+                provider_cfg = self._get_provider_config(model)
+                res = requests.post(
+                    provider_cfg.url,
+                    json=provider_cfg.build_payload(model, prompt),
+                    headers=provider_cfg.headers,
+                    timeout=15
+                )
+                if res.status_code != 200: continue
+                raw, _, _ = extract_completion(res)
+                result = parse_llm_json(raw)
+                
+                is_disaster = result.get('disaster') is True
+                reason = result.get('reason', '')
+                if is_disaster:
+                    print(f"  🚨 NEWS DISASTER DETECTED for {pair}: {reason}")
+                return is_disaster
+            except Exception as e:
+                continue
+        return False
+
     def get_confidence_threshold(self, strategy_id: str) -> float:
         s = self.store.strategies.get(strategy_id)
         return s.min_confidence if s else 80.0

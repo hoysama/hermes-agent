@@ -470,6 +470,8 @@ class HermesBrain:
                 should_sell, reason = True, f"BREAKEVEN LOCK (peak {peak_pnl:.1f}% → now {pnl_pct:.1f}%)"
             elif age_hours >= CONFIG['time_stop_hours']:
                 should_sell, reason = True, f"TIME STOP {age_hours:.1f}h (limit {CONFIG['time_stop_hours']}h, pnl {pnl_pct:+.2f}%)"
+            elif pnl_pct < -4.0 and self.check_news_disaster(pair):
+                should_sell, reason = True, f"PANIC SELL (NEWS DISASTER DETECTED)"
             elif action == 'sell' and confidence >= 70:
                 confirmed, confirm_reason = self.engine.confirm_trade_signal(
                     pair, decision, pair_market, regime.get('primary_regime', 'range_bound'), position
@@ -693,6 +695,9 @@ class HermesBrain:
                     )
                     if not confirmed:
                         print(f"  ⏭️ BUY skipped {pair}: confirmation rejected ({confirmation_reason})")
+                        continue
+                    if self.check_news_disaster(pair):
+                        print(f"  ⏭️ BUY skipped {pair}: NEWS DISASTER DETECTED")
                         continue
                     if self.open_trades_count < CONFIG['max_open_trades']:
                         strategy = self.engine.get_strategy(strategy_id)
