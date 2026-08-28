@@ -84,6 +84,7 @@ from agent.prompt_caching import (
     strip_anthropic_cache_control,
     strip_anthropic_tool_cache_control,
 )
+from agent.provider_projection import splice_provider_projection
 from agent.retry_utils import (
     adaptive_rate_limit_backoff,
     is_zai_coding_overload_error,
@@ -3142,13 +3143,14 @@ def run_conversation(
                 # session instead of re-failing every retry.
                 if getattr(agent, "_disable_streaming", False):
                     _use_streaming = False
-                # CopilotACPClient communicates via subprocess stdio and
-                # returns a plain SimpleNamespace — not an iterable
-                # stream.  Mirror the ACP exclusion used for Responses
-                # API upgrade (lines ~1083-1085).
+                # An ACP client communicates via subprocess stdio and returns a
+                # plain SimpleNamespace — not an iterable stream.  Keyed on the
+                # `acp://` scheme rather than one vendor, so any ACP client is
+                # excluded.  Mirror the ACP exclusion used for Responses API
+                # upgrade (lines ~1083-1085).
                 elif (
                     agent.provider in {"copilot-acp"}
-                    or str(agent.base_url or "").lower().startswith("acp://copilot")
+                    or str(agent.base_url or "").lower().startswith("acp://")
                     or str(agent.base_url or "").lower().startswith("acp+tcp://")
                 ):
                     _use_streaming = False
@@ -4670,6 +4672,11 @@ def run_conversation(
                     # we don't false-trip on other URL validation
                     # errors. (issue #23570)
                     "image_url'. expected",
+                    # ChatGPT-account Codex can also reject corrupt/unsupported
+                    # native image payloads with this wording. Treat it like a
+                    # provider image rejection so the loop strips images and
+                    # retries text-only instead of aborting the session.
+                    "image data you provided does not represent a valid image",
                     # DeepSeek's OpenAI-compatible API reports text-only
                     # request-body variants as:
                     # "unknown variant `image_url`, expected `text`".
@@ -4684,6 +4691,17 @@ def run_conversation(
                     # every subsequent message queued behind the stuck turn —
                     # the P1 in issue #21160. The 404 passes the 4xx gate below.
                     "no endpoints found that support image input",
+                    # Kimi / Moonshot / other OpenAI-compatible Chinese
+                    # providers reject truncated or corrupt image bytes with
+                    # HTTP 400 "Invalid request: prepare image failed ...
+                    # failed to decode image: invalid or unsupported image
+                    # format". Like the Codex case above, the bad bytes are
+                    # baked into immutable conversation history and re-sent on
+                    # every retry, wedging the session. Strip the images so the
+                    # turn recovers instead of exhausting retries. (issue
+                    # #76884; complements the proactive full-decode validation
+                    # in tools/vision_tools._normalize_to_supported_image)
+                    "failed to decode image",
                 )
                 _err_lower = _err_body.lower()
                 _looks_like_image_rejection = any(
@@ -4882,6 +4900,36 @@ def run_conversation(
                         logger.info(
                             "multimodal-tool-content recovery: no list-type tool "
                             "messages with image parts found; surfacing original error."
+                        )
+
+                # Image-corrupt recovery: the provider decoded the request but
+                # rejected the image bytes themselves (e.g. xAI's "Invalid PNG
+                # image." on a re-serialized image part from replayed
+                # history). Shrinking corrupt bytes doesn't help, so strip the
+                # image parts and retry once instead of routing through the
+                # shrink path above. See issue #69078.
+                if classified.reason == FailoverReason.image_corrupt:
+                    # Strip ONLY the per-call payload copy. api_messages rows
+                    # are shallow copies of canonical history, and the strip
+                    # replaces msg["content"] rather than mutating the shared
+                    # parts list — so canonical messages keep their images.
+                    # A transient provider rejection must not permanently
+                    # erase history (#69104 sweeper review; the copy-on-write
+                    # contract from e762a5a473).
+                    _imgs_removed = False
+                    if isinstance(api_messages, list):
+                        _imgs_removed = _strip_images_from_messages(api_messages)
+                    if _imgs_removed:
+                        agent._vprint(
+                            f"{agent.log_prefix}⚠️  Provider rejected a corrupted image — "
+                            f"stripped images from the retry payload and retrying...",
+                            force=True,
+                        )
+                        continue
+                    else:
+                        logger.info(
+                            "image-corrupt recovery: no image parts found to "
+                            "strip; surfacing original error."
                         )
 
                 # Anthropic OAuth subscription rejected the 1M-context beta
@@ -6780,6 +6828,15 @@ def run_conversation(
                     assistant_message.content = "\n".join(parts)
                 else:
                     assistant_message.content = str(raw)
+
+            # ── Agent-as-provider projection ──────────────────────────────
+            # A provider that IS an agent ran its own tools inside its own
+            # session before we got here: splice that work into the transcript
+            # as completed call/result rows and tick the skill-review nudge
+            # with the iterations Hermes never saw. Appended before this turn's
+            # assistant message, so the order reads call → result → answer.
+            # No-op for ordinary providers; see agent/provider_projection.py.
+            splice_provider_projection(agent, response, messages)
 
             try:
                 from hermes_cli.lifecycle import (
