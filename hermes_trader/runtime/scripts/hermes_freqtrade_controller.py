@@ -199,9 +199,17 @@ class HermesBrain:
         avg_gain = sum(gains[-14:]) / min(14, len(gains)) if gains else 0
         avg_loss = sum(losses[-14:]) / min(14, len(losses)) if losses else 0.001
         rsi = 100 - (100 / (1 + avg_gain / max(avg_loss, 0.001)))
+        # ATR-14 approximation
+        trs = []
+        for i in range(1, len(closes)):
+            tr = max(highs[i] - lows[i], abs(highs[i] - closes[i-1]), abs(lows[i] - closes[i-1]))
+            trs.append(tr)
+        atr = sum(trs[-14:]) / min(14, len(trs)) if trs else 0
+        
         return {
             'ema12': round(ema, 4),
             'rsi14': round(rsi, 1),
+            'atr14': round(atr, 4),
             'high_24h_candle': round(max(highs[-24:]), 4),
             'low_24h_candle': round(min(lows[-24:]), 4),
             'avg_volume': round(sum(volumes[-24:]) / min(24, len(volumes)), 0),
@@ -253,6 +261,23 @@ class HermesBrain:
                 print(f"  ⚠️ Candle fetch errors: {candle_errors}/{len(symbols)} pairs", flush=True)
             else:
                 print(f"  ✅ Candles loaded for {len(symbols)} pairs (24×1h + 12×4h)", flush=True)
+
+            print(f"  📡 Fetching Order Books ({len(symbols)} pairs)...", flush=True)
+            for pair in symbols:
+                if pair not in self.market_data:
+                    continue
+                try:
+                    ob = exchange.fetch_order_book(pair, limit=20)
+                    bids = sum([b[1] for b in ob.get('bids', [])])
+                    asks = sum([a[1] for a in ob.get('asks', [])])
+                    total = bids + asks
+                    bid_ratio = (bids / total * 100) if total > 0 else 50
+                    self.market_data[pair]['orderbook'] = {
+                        'bid_ratio': round(bid_ratio, 1),
+                        'ask_ratio': round(100 - bid_ratio, 1)
+                    }
+                except Exception:
+                    self.market_data[pair]['orderbook'] = {'bid_ratio': 50, 'ask_ratio': 50}
 
             if not self.market_data:
                 raise RuntimeError("OKX returned no configured tickers")
@@ -428,10 +453,19 @@ class HermesBrain:
 
             should_sell = False
             reason = ''
+            
+            indicators = self.market_data.get(pair, {}).get('indicators', {})
+            current_price = self.market_data.get(pair, {}).get('price', 0)
+            ema12 = indicators.get('ema12', 0)
+            atr14 = indicators.get('atr14', 0)
+            trailing_stop_price = ema12 - atr14
+
             if pnl_pct >= take_profit:
                 should_sell, reason = True, f"TAKE PROFIT {pnl_pct:.1f}% (target {take_profit:.1f}%)"
             elif pnl_pct <= stop_loss:
                 should_sell, reason = True, f"STOP LOSS {pnl_pct:.1f}% (limit {stop_loss:.1f}%)"
+            elif ema12 > 0 and atr14 > 0 and peak_pnl > 1.0 and current_price < trailing_stop_price:
+                should_sell, reason = True, f"TRAILING STOP (price ${current_price:.4f} < ${trailing_stop_price:.4f})"
             elif peak_pnl >= CONFIG['breakeven_trigger_pct'] and pnl_pct <= CONFIG['breakeven_lock_pct']:
                 should_sell, reason = True, f"BREAKEVEN LOCK (peak {peak_pnl:.1f}% → now {pnl_pct:.1f}%)"
             elif age_hours >= CONFIG['time_stop_hours']:
@@ -460,6 +494,43 @@ class HermesBrain:
                 self.save_state()
         print(f"Exit review complete: SELL executed={executed_sells}")
         return {'status': 'exit_review_complete', 'buys': 0, 'sells': executed_sells}
+
+    def check_news_disaster(self, pair: str) -> bool:
+        try:
+            import os, requests
+            searxng_token = os.environ.get("MODAL_PROXY_TOKEN_SEARXNG")
+            extractor_token = os.environ.get("MODAL_PROXY_TOKEN_WEB_EXTRACTOR")
+            if not searxng_token or not extractor_token:
+                return False
+                
+            print(f"  🗞️ Fetching news for {pair}...", flush=True)
+            url = "https://hoysama--hermes-searxng-search.modal.run/search"
+            headers_s = {"Authorization": f"Bearer {searxng_token}", "Content-Type": "application/json"}
+            res = requests.post(url, json={"query": f"{pair} crypto news", "engines": "google,bing,duckduckgo", "format": "json"}, headers=headers_s, timeout=7)
+            if not res.ok: return False
+            
+            results = res.json().get('results', [])
+            if not results: return False
+            
+            top_url = results[0].get('url')
+            if not top_url: return False
+            
+            print(f"  🕷️ Extracting article: {top_url[:40]}...", flush=True)
+            ext_url = "https://hoysama--hermes-web-extractor-extract.modal.run/extract"
+            headers_e = {"Authorization": f"Bearer {extractor_token}", "Content-Type": "application/json"}
+            ext_res = requests.post(ext_url, json={"url": top_url}, headers=headers_e, timeout=12)
+            
+            article_text = ""
+            if ext_res.ok:
+                article_text = ext_res.json().get('markdown', '')
+                
+            if not article_text:
+                article_text = "\n".join([r.get('title', '') + " - " + r.get('content', '') for r in results[:3]])
+                
+            return self.engine.analyze_news_disaster(pair, article_text)
+        except Exception as e:
+            print(f"  ⚠️ News fetch error: {e}", flush=True)
+            return False
 
     def _rotation_candidate(self, positions, decisions, market_data):
         today = datetime.now(timezone.utc).date().isoformat()

@@ -789,12 +789,16 @@ class StrategyEngine:
                 f"open_date={position.get('open_date') or position.get('open_date_utc')}"
             )
 
-        # Build candle context for richer analysis
         candle_context = ""
         indicators = data.get('indicators', {})
         if indicators:
-            candle_context += f"\nTechnical: EMA12=${indicators.get('ema12', 0):.4f}, RSI14={indicators.get('rsi14', 50):.0f}, Trend={indicators.get('trend', '?')}"
+            candle_context += f"\nTechnical: EMA12=${indicators.get('ema12', 0):.4f}, RSI14={indicators.get('rsi14', 50):.0f}, ATR14={indicators.get('atr14', 0):.4f}, Trend={indicators.get('trend', '?')}"
             candle_context += f", 24h Range: ${indicators.get('low_24h_candle', 0):.4f}-${indicators.get('high_24h_candle', 0):.4f}"
+            
+        ob = data.get('orderbook', {})
+        if ob:
+            candle_context += f"\nOrder Book: {ob.get('bid_ratio', 50)}% Bids vs {ob.get('ask_ratio', 50)}% Asks"
+
         candles_1h = data.get('candles_1h', [])
         if candles_1h:
             recent = candles_1h[-6:]
