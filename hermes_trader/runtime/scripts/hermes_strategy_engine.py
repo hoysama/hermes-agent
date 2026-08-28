@@ -479,6 +479,15 @@ class RegimeDetector:
         btc_change = btc.get('change_24h', 0)
         btc_price = btc.get('price', 0)
         high_low_range = ((btc.get('high_24h', 0) - btc.get('low_24h', 0)) / btc_price * 100) if btc_price > 0 else 0
+
+        # Technical indicators from candles
+        btc_ind = btc.get('indicators', {})
+        eth_ind = eth.get('indicators', {})
+        candle_context = ""
+        if btc_ind:
+            candle_context += f"\n- BTC Indicators: EMA12=${btc_ind.get('ema12', 0):.0f}, RSI14={btc_ind.get('rsi14', 50):.0f}, Trend={btc_ind.get('trend', '?')}"
+        if eth_ind:
+            candle_context += f"\n- ETH Indicators: EMA12=${eth_ind.get('ema12', 0):.0f}, RSI14={eth_ind.get('rsi14', 50):.0f}, Trend={eth_ind.get('trend', '?')}"
         
         prompt = f"""You are the market regime analyzer for an automated trading system.
 
@@ -490,7 +499,7 @@ confidence must be an integer from 0 to 100.
 Market Regime Detection:
 - BTC: ${btc_price:.0f}, 24h Change: {btc_change:.2f}%, Range: {high_low_range:.1f}%
 - ETH 24h Change: {eth.get('change_24h', 0):.2f}%
-- Pairs Up: {up_count}/{len(market_data)}, Down: {down_count}/{len(market_data)}
+- Pairs Up: {up_count}/{len(market_data)}, Down: {down_count}/{len(market_data)}{candle_context}
 
 Output only the JSON object. Do not explain your reasoning. Keep reason_arabic under 80 characters.
 Output ONLY JSON: {{"primary_regime": "<regime>", "secondary_regime": "<regime>", "confidence": <int>, "reason_arabic": "<Arabic reason>", "risk_level": "<low|medium|high|extreme>"}}"""
@@ -779,12 +788,30 @@ class StrategyEngine:
                 f"stake={position.get('stake_amount')}, "
                 f"open_date={position.get('open_date') or position.get('open_date_utc')}"
             )
+
+        # Build candle context for richer analysis
+        candle_context = ""
+        indicators = data.get('indicators', {})
+        if indicators:
+            candle_context += f"\nTechnical: EMA12=${indicators.get('ema12', 0):.4f}, RSI14={indicators.get('rsi14', 50):.0f}, Trend={indicators.get('trend', '?')}"
+            candle_context += f", 24h Range: ${indicators.get('low_24h_candle', 0):.4f}-${indicators.get('high_24h_candle', 0):.4f}"
+        candles_1h = data.get('candles_1h', [])
+        if candles_1h:
+            recent = candles_1h[-6:]
+            candle_lines = []
+            for c in recent:
+                from datetime import datetime as _dt
+                t_str = _dt.utcfromtimestamp(c[0] / 1000).strftime('%H:%M') if c[0] > 1e9 else '??:??'
+                direction = '▲' if c[4] >= c[1] else '▼'
+                candle_lines.append(f"  {t_str} {direction} {c[1]:.2f}→{c[4]:.2f} (H{c[2]:.2f}/L{c[3]:.2f})")
+            candle_context += f"\n1h Candles (last {len(recent)}):\n" + '\n'.join(candle_lines)
+
         prompt = f"""You are Hermes AI Trading Brain - Dynamic Strategy Engine v3.0 (AGGRESSIVE MODE).
 Analyze {pair} using active strategies.
 
 Market: {pair} at ${data['price']:.4f}, 24h: {data['change_24h']:.2f}%
 BTC: ${btc.get('price', 0):.0f}, 24h: {btc.get('change_24h', 0):.2f}%
-Regime: {regime}
+Regime: {regime}{candle_context}
 {position_context}
 
 Active Strategies:
@@ -793,7 +820,7 @@ Active Strategies:
 Rules:
 1. Output ONLY valid JSON: {{"action": "buy"|"sell"|"neutral", "confidence": <int 0-100>, "strategy_id": "<matching strategy>", "reason": "<Arabic rationale>"}}
 2. For an OPEN POSITION, decide HOLD as `neutral` unless there is a concrete exit reason; use `sell` only when exit is justified by trend deterioration, risk, or a valid target/stop condition. Never return `buy` for an open position.
-3. For a new pair, evaluate entry normally.
+3. For a new pair, evaluate entry normally. Use the candle data and technical indicators to confirm the trend direction.
 4. Write reason in ARABIC and keep it under 80 characters.
 5. Do not explain your reasoning. Return only the JSON object."""
 

@@ -33,7 +33,27 @@ CONFIG = {
     'trading_pairs': [
         'BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'XRP/USDT',
         'BNB/USDT', 'LINK/USDT', 'ADA/USDT', 'AVAX/USDT'
-    ]
+    ],
+    # Breakeven Lock: protect profits once they reach a threshold
+    'breakeven_trigger_pct': 1.5,    # activate lock when PnL reaches +1.5%
+    'breakeven_lock_pct': 0.3,       # lock exit at +0.3% (guaranteed small profit)
+    # Regime-Aware Position Sizing: scale stake by market regime
+    'regime_stake_multiplier': {
+        'trending_up': 1.0,        # 100% — bullish
+        'breakout': 1.0,           # 100% — breakout
+        'accumulation': 0.85,      # 85%  — accumulation
+        'recovery': 0.70,          # 70%  — recovery
+        'range_bound': 0.60,       # 60%  — sideways
+        'high_volatility': 0.50,   # 50%  — volatile
+        'trending_down': 0.40,     # 40%  — bearish
+        'distribution': 0.30,      # 30%  — distribution
+        'crash': 0.0,              # 0%   — crash = no trade
+    },
+    # Staged Take Profit: partial exits at intermediate profit levels
+    'staged_tp_levels': [
+        {'pnl_pct': 3.0, 'sell_fraction': 0.50},  # at +3% → sell 50%
+        {'pnl_pct': 6.0, 'sell_fraction': 0.50},  # at +6% → sell 50% of remaining
+    ],
 }
 
 FREQTRADE_CONFIG_PATH = '/root/.hermes/profiles/trader/freqtrade/config/config.json'
@@ -104,6 +124,8 @@ class HermesBrain:
         self.last_decisions = {}
         self.last_update = None
         self.daily_rotations = []
+        self.peak_pnl_tracker = {}    # {trade_id: max_pnl_pct}
+        self.staged_exits_done = {}   # {trade_id: [completed_level_indices]}
         self.load_state()
 
     def load_state(self):
@@ -117,6 +139,8 @@ class HermesBrain:
                     self.last_decisions = state.get('last_decisions', {})
                     self.last_update = state.get('last_update')
                     self.daily_rotations = state.get('daily_rotations', [])
+                    self.peak_pnl_tracker = {str(k): v for k, v in state.get('peak_pnl_tracker', {}).items()}
+                    self.staged_exits_done = {str(k): v for k, v in state.get('staged_exits_done', {}).items()}
         except:
             pass
 
@@ -129,13 +153,60 @@ class HermesBrain:
                 'trade_log': self.trade_log[-100:],
                 'last_decisions': self.last_decisions,
                 'strategy_summary': self.engine.store.get_summary() if self.engine else {},
-                'last_update': datetime.now().isoformat()
-                ,'daily_rotations': self.daily_rotations[-20:]
+                'last_update': datetime.now().isoformat(),
+                'daily_rotations': self.daily_rotations[-20:],
+                'peak_pnl_tracker': self.peak_pnl_tracker,
+                'staged_exits_done': self.staged_exits_done,
             }
             with open(STATE_FILE, 'w') as f:
                 json.dump(state, f, indent=2, default=str)
         except Exception as exc:
             print(f"Warning saving state: {exc}")
+
+    @staticmethod
+    def _format_candles_compact(candles: list, tf_label: str) -> str:
+        """Format OHLCV candles into a compact string for LLM prompts."""
+        if not candles:
+            return f"  {tf_label}: no data"
+        lines = []
+        for c in candles[-6:]:  # last 6 candles for prompt brevity
+            ts, o, h, l, close, vol = c[0], c[1], c[2], c[3], c[4], c[5]
+            t_str = datetime.utcfromtimestamp(ts / 1000).strftime('%H:%M') if ts > 1e9 else '??:??'
+            direction = '▲' if close >= o else '▼'
+            lines.append(f"    {t_str} {direction} {o:.2f}→{close:.2f} (H{h:.2f}/L{l:.2f})")
+        return f"  {tf_label} (last {len(lines)}):\n" + '\n'.join(lines)
+
+    @staticmethod
+    def _candle_summary(candles_1h: list) -> Dict:
+        """Compute lightweight technical indicators from 1h candles."""
+        if not candles_1h or len(candles_1h) < 5:
+            return {}
+        closes = [c[4] for c in candles_1h]
+        highs = [c[2] for c in candles_1h]
+        lows = [c[3] for c in candles_1h]
+        volumes = [c[5] for c in candles_1h]
+        # EMA-12 approximation
+        ema = closes[0]
+        k = 2 / (min(12, len(closes)) + 1)
+        for p in closes[1:]:
+            ema = p * k + ema * (1 - k)
+        # RSI-14 approximation
+        gains, losses = [], []
+        for i in range(1, len(closes)):
+            diff = closes[i] - closes[i - 1]
+            gains.append(max(diff, 0))
+            losses.append(max(-diff, 0))
+        avg_gain = sum(gains[-14:]) / min(14, len(gains)) if gains else 0
+        avg_loss = sum(losses[-14:]) / min(14, len(losses)) if losses else 0.001
+        rsi = 100 - (100 / (1 + avg_gain / max(avg_loss, 0.001)))
+        return {
+            'ema12': round(ema, 4),
+            'rsi14': round(rsi, 1),
+            'high_24h_candle': round(max(highs[-24:]), 4),
+            'low_24h_candle': round(min(lows[-24:]), 4),
+            'avg_volume': round(sum(volumes[-24:]) / min(24, len(volumes)), 0),
+            'trend': 'up' if closes[-1] > ema else 'down',
+        }
 
     def fetch_market_data(self, extra_pairs: Optional[List[str]] = None) -> Dict:
         try:
@@ -160,6 +231,29 @@ class HermesBrain:
                         'low_24h': float(ticker.get('low', 0)),
                         'volume_24h': float(ticker.get('quoteVolume', 0)),
                     }
+
+            # Fetch OHLCV candles: 24×1h + 12×4h per pair
+            print(f"  📡 Fetching OHLCV candles ({len(symbols)} pairs × 2 timeframes)...", flush=True)
+            candle_errors = 0
+            for pair in symbols:
+                if pair not in self.market_data:
+                    continue
+                try:
+                    candles_1h = exchange.fetch_ohlcv(pair, '1h', limit=24)
+                    candles_4h = exchange.fetch_ohlcv(pair, '4h', limit=12)
+                    self.market_data[pair]['candles_1h'] = candles_1h
+                    self.market_data[pair]['candles_4h'] = candles_4h
+                    self.market_data[pair]['indicators'] = self._candle_summary(candles_1h)
+                except Exception:
+                    candle_errors += 1
+                    self.market_data[pair]['candles_1h'] = []
+                    self.market_data[pair]['candles_4h'] = []
+                    self.market_data[pair]['indicators'] = {}
+            if candle_errors:
+                print(f"  ⚠️ Candle fetch errors: {candle_errors}/{len(symbols)} pairs", flush=True)
+            else:
+                print(f"  ✅ Candles loaded for {len(symbols)} pairs (24×1h + 12×4h)", flush=True)
+
             if not self.market_data:
                 raise RuntimeError("OKX returned no configured tickers")
             return self.market_data
@@ -232,12 +326,31 @@ class HermesBrain:
             res = requests.post(f"{FREQTRADE_API['url']}/api/v1/forcesell", auth=auth, json=payload, timeout=10)
             if res.status_code == 200:
                 print(f"  🔴 SELL Trade #{trade_id} ({pair})")
+                # Clean up trackers for fully closed trades
+                self.peak_pnl_tracker.pop(str(trade_id), None)
+                self.staged_exits_done.pop(str(trade_id), None)
                 return True
             else:
                 print(f"  ❌ SELL failed #{trade_id}: {res.text[:100]}")
             return False
         except Exception as e:
             print(f"  ❌ Error selling trade #{trade_id}: {e}")
+            return False
+
+    def execute_partial_sell(self, trade_id: int, pair: str, amount: float) -> bool:
+        """Sell a partial amount of an open trade for staged take profit."""
+        try:
+            auth = (FREQTRADE_API['username'], FREQTRADE_API['password'])
+            payload = {'tradeid': str(trade_id), 'ordertype': 'market', 'amount': amount}
+            res = requests.post(f"{FREQTRADE_API['url']}/api/v1/forcesell", auth=auth, json=payload, timeout=10)
+            if res.status_code == 200:
+                print(f"  🟡 PARTIAL SELL Trade #{trade_id} ({pair}): {amount:.6f} units")
+                return True
+            else:
+                print(f"  ❌ PARTIAL SELL failed #{trade_id}: {res.text[:100]}")
+            return False
+        except Exception as e:
+            print(f"  ❌ Error partial selling trade #{trade_id}: {e}")
             return False
 
     def run_exit_cycle(self) -> Dict:
@@ -287,12 +400,40 @@ class HermesBrain:
             take_profit = levels['take_profit_pct']
             stop_loss = levels['stop_loss_pct']
             age_hours = self._position_age_hours(position)
+
+            # Track peak PnL for breakeven lock
+            tid = str(trade_id)
+            self.peak_pnl_tracker[tid] = max(self.peak_pnl_tracker.get(tid, 0), pnl_pct)
+            peak_pnl = self.peak_pnl_tracker[tid]
+
+            # Staged Take Profit: partial exits at intermediate levels
+            done_stages = self.staged_exits_done.get(tid, [])
+            for level_idx, level in enumerate(CONFIG.get('staged_tp_levels', [])):
+                if level_idx in done_stages:
+                    continue
+                if pnl_pct >= level['pnl_pct']:
+                    current_amount = position.get('amount', 0)
+                    sell_amount = current_amount * level['sell_fraction']
+                    if sell_amount > 0 and self.execute_partial_sell(trade_id, pair, sell_amount):
+                        if tid not in self.staged_exits_done:
+                            self.staged_exits_done[tid] = []
+                        self.staged_exits_done[tid].append(level_idx)
+                        self.trade_log.append({
+                            'timestamp': datetime.now().isoformat(), 'pair': pair,
+                            'action': 'partial_sell', 'pnl_pct': pnl_pct,
+                            'level_pct': level['pnl_pct'], 'fraction': level['sell_fraction'],
+                            'trade_id': trade_id,
+                        })
+                        self.save_state()
+
             should_sell = False
             reason = ''
             if pnl_pct >= take_profit:
                 should_sell, reason = True, f"TAKE PROFIT {pnl_pct:.1f}% (target {take_profit:.1f}%)"
             elif pnl_pct <= stop_loss:
                 should_sell, reason = True, f"STOP LOSS {pnl_pct:.1f}% (limit {stop_loss:.1f}%)"
+            elif peak_pnl >= CONFIG['breakeven_trigger_pct'] and pnl_pct <= CONFIG['breakeven_lock_pct']:
+                should_sell, reason = True, f"BREAKEVEN LOCK (peak {peak_pnl:.1f}% → now {pnl_pct:.1f}%)"
             elif age_hours >= CONFIG['time_stop_hours']:
                 should_sell, reason = True, f"TIME STOP {age_hours:.1f}h (limit {CONFIG['time_stop_hours']}h, pnl {pnl_pct:+.2f}%)"
             elif action == 'sell' and confidence >= 70:
@@ -452,8 +593,15 @@ class HermesBrain:
                     continue
                 min_stake = 15.0
                 effective_balance = free_balance * 0.985
+                # Regime-Aware Sizing: scale down in risky markets
+                regime_mult = CONFIG.get('regime_stake_multiplier', {}).get(
+                    regime.get('primary_regime', 'range_bound'), 0.60
+                )
+                effective_balance *= regime_mult
+                if regime_mult < 1.0:
+                    print(f"  📉 Regime sizing: {regime.get('primary_regime')} → {regime_mult:.0%} of balance")
                 if effective_balance < min_stake:
-                    print(f"  ⏭️ BUY skipped {pair}: insufficient balance (${free_balance:.2f} < ${min_stake / 0.985:.2f})")
+                    print(f"  ⏭️ BUY skipped {pair}: insufficient balance after regime adjustment (${effective_balance:.2f} < ${min_stake:.2f})")
                     continue
                 # Freqtrade permits only one open spot position per pair. Do
                 # not turn a known duplicate into a noisy forceenter failure.
@@ -535,20 +683,49 @@ class HermesBrain:
             levels = self._dynamic_exit_levels(pos, pair_market, decision)
             take_profit = levels['take_profit_pct']
             stop_loss = levels['stop_loss_pct']
-            opened_at = pos.get('open_date') or pos.get('open_date_utc')
-            age_hours = 0.0
-            if opened_at:
-                try:
-                    opened = datetime.fromisoformat(str(opened_at).replace('Z', '+00:00'))
-                    if opened.tzinfo is None:
-                        opened = opened.replace(tzinfo=timezone.utc)
-                    age_hours = max(0.0, (datetime.now(timezone.utc) - opened).total_seconds() / 3600)
-                except (TypeError, ValueError):
-                    age_hours = 0.0
+            age_hours = self._position_age_hours(pos)
+
+            # Track peak PnL for breakeven lock
+            tid = str(trade_id)
+            self.peak_pnl_tracker[tid] = max(self.peak_pnl_tracker.get(tid, 0), pnl_pct)
+            peak_pnl = self.peak_pnl_tracker[tid]
+
+            # Staged Take Profit: partial exits at intermediate levels
+            done_stages = self.staged_exits_done.get(tid, [])
+            for level_idx, level in enumerate(CONFIG.get('staged_tp_levels', [])):
+                if level_idx in done_stages:
+                    continue
+                if pnl_pct >= level['pnl_pct']:
+                    current_amount = pos.get('amount', 0)
+                    sell_amount = current_amount * level['sell_fraction']
+                    if sell_amount > 0 and self.execute_partial_sell(trade_id, pair, sell_amount):
+                        if tid not in self.staged_exits_done:
+                            self.staged_exits_done[tid] = []
+                        self.staged_exits_done[tid].append(level_idx)
+                        self.trade_log.append({
+                            'timestamp': datetime.now().isoformat(), 'pair': pair,
+                            'action': 'partial_sell', 'pnl_pct': pnl_pct,
+                            'level_pct': level['pnl_pct'], 'fraction': level['sell_fraction'],
+                            'trade_id': trade_id,
+                        })
+                        self.save_state()
+
             should_sell = False
             sell_reason = ""
             
-            if action == 'sell' and confidence >= 70:
+            if pnl_pct >= take_profit:
+                should_sell = True
+                sell_reason = f"TAKE PROFIT {pnl_pct:.1f}% (target {take_profit:.1f}%)"
+            elif pnl_pct <= stop_loss:
+                should_sell = True
+                sell_reason = f"STOP LOSS {pnl_pct:.1f}% (limit {stop_loss:.1f}%)"
+            elif peak_pnl >= CONFIG['breakeven_trigger_pct'] and pnl_pct <= CONFIG['breakeven_lock_pct']:
+                should_sell = True
+                sell_reason = f"BREAKEVEN LOCK (peak {peak_pnl:.1f}% → now {pnl_pct:.1f}%)"
+            elif age_hours >= CONFIG['time_stop_hours']:
+                should_sell = True
+                sell_reason = f"TIME STOP {age_hours:.1f}h (limit {CONFIG['time_stop_hours']}h, pnl {pnl_pct:+.2f}%)"
+            elif action == 'sell' and confidence >= 70:
                 confirmed, confirmation_reason = self.engine.confirm_trade_signal(
                     pair, decision, pair_market, regime.get('primary_regime', 'unknown'), pos
                 )
@@ -557,15 +734,6 @@ class HermesBrain:
                     sell_reason = f"LLM sell confirmed (conf={confidence:.0f}%)"
                 else:
                     print(f"  ⏭️ SELL skipped {pair}: confirmation rejected ({confirmation_reason})")
-            elif pnl_pct >= take_profit:
-                should_sell = True
-                sell_reason = f"TAKE PROFIT {pnl_pct:.1f}% (target {take_profit:.1f}%)"
-            elif pnl_pct <= stop_loss:
-                should_sell = True
-                sell_reason = f"STOP LOSS {pnl_pct:.1f}% (limit {stop_loss:.1f}%)"
-            elif age_hours >= CONFIG['time_stop_hours']:
-                should_sell = True
-                sell_reason = f"TIME STOP {age_hours:.1f}h (limit {CONFIG['time_stop_hours']}h, pnl {pnl_pct:+.2f}%)"
             
             if should_sell:
                 if self.execute_sell(trade_id, pair):
@@ -574,9 +742,6 @@ class HermesBrain:
                     self.daily_pnl += (pnl_pct / 100) * pos.get('stake_amount', 0)
                     self.weekly_pnl += (pnl_pct / 100) * pos.get('stake_amount', 0)
 
-                    # Always derive the realized PnL before recording it.
-                    # Positions without a strategy id can still be closed by
-                    # a stop/time rule and must not abort the cycle/report.
                     pnl_dollar = (pnl_pct / 100) * pos.get('stake_amount', 0)
                     if strategy_id != 'none':
                         self.engine.record_trade_result(strategy_id, pnl_dollar, pnl_pct, 0)
@@ -586,7 +751,7 @@ class HermesBrain:
                         'pair': pair,
                         'action': 'sell',
                         'confidence': confidence,
-                        'pnl': (pnl_pct / 100) * pos.get('stake_amount', 0),
+                        'pnl': pnl_dollar,
                         'pnl_pct': pnl_pct,
                         'strategy_id': strategy_id,
                         'trade_id': trade_id,
