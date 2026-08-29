@@ -664,7 +664,7 @@ class HermesBrain:
                 if free_balance is None:
                     print(f"  ⏭️ BUY skipped {pair}: live balance unavailable")
                     continue
-                min_stake = 10.0
+                min_stake = 5.0
                 effective_balance = free_balance * 0.985
                 # Regime-Aware Sizing: scale down in risky markets
                 regime_mult = CONFIG.get('regime_stake_multiplier', {}).get(
