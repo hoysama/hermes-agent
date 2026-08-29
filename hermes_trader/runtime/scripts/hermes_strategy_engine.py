@@ -792,7 +792,11 @@ class StrategyEngine:
         candle_context = ""
         indicators = data.get('indicators', {})
         if indicators:
-            candle_context += f"\nTechnical: EMA12=${indicators.get('ema12', 0):.4f}, RSI14={indicators.get('rsi14', 50):.0f}, ATR14={indicators.get('atr14', 0):.4f}, Trend={indicators.get('trend', '?')}"
+            candle_context += f"\nTechnical: EMA12=${indicators.get('ema12', 0):.4f}, RSI14={indicators.get('rsi14', 50):.0f}, ATR14={indicators.get('atr14', 0):.4f} ({indicators.get('atr_pct', 0):.2f}%), Trend={indicators.get('trend', '?')}"
+            if indicators.get('rsi_divergence') and indicators.get('rsi_divergence') != 'NONE':
+                candle_context += f", Divergence={indicators.get('rsi_divergence')} 🟢"
+            if indicators.get('buy_vol_ratio') is not None:
+                candle_context += f", Volume Flow={indicators.get('buy_vol_ratio')}% Buyer Volume"
             candle_context += f", 24h Range: ${indicators.get('low_24h_candle', 0):.4f}-${indicators.get('high_24h_candle', 0):.4f}"
             
         ob = data.get('orderbook', {})
@@ -824,7 +828,7 @@ Active Strategies:
 Rules:
 1. Output ONLY valid JSON: {{"action": "buy"|"sell"|"neutral", "confidence": <int 0-100>, "strategy_id": "<matching strategy>", "reason": "<Arabic rationale>"}}
 2. For an OPEN POSITION, decide HOLD as `neutral` unless there is a concrete exit reason; use `sell` only when exit is justified by trend deterioration, risk, or a valid target/stop condition. Never return `buy` for an open position.
-3. For a new pair, evaluate entry normally. Use the candle data and technical indicators to confirm the trend direction.
+3. For a new pair, evaluate entry. If RSI Divergence is BULLISH_DIVERGENCE or buyer volume > 50% near support, favor BUY bounce with confidence 60-75%.
 4. Write reason in ARABIC and keep it under 80 characters.
 5. Do not explain your reasoning. Return only the JSON object."""
 

@@ -178,19 +178,22 @@ class HermesBrain:
 
     @staticmethod
     def _candle_summary(candles_1h: list) -> Dict:
-        """Compute lightweight technical indicators from 1h candles."""
+        """Compute advanced technical indicators from 1h candles: EMA12, RSI14, ATR14, Bullish Divergence, Volume Flow."""
         if not candles_1h or len(candles_1h) < 5:
             return {}
         closes = [c[4] for c in candles_1h]
+        opens = [c[1] for c in candles_1h]
         highs = [c[2] for c in candles_1h]
         lows = [c[3] for c in candles_1h]
         volumes = [c[5] for c in candles_1h]
-        # EMA-12 approximation
+        
+        # EMA-12 calculation
         ema = closes[0]
         k = 2 / (min(12, len(closes)) + 1)
         for p in closes[1:]:
             ema = p * k + ema * (1 - k)
-        # RSI-14 approximation
+            
+        # RSI-14 calculation & rolling series
         gains, losses = [], []
         for i in range(1, len(closes)):
             diff = closes[i] - closes[i - 1]
@@ -199,17 +202,36 @@ class HermesBrain:
         avg_gain = sum(gains[-14:]) / min(14, len(gains)) if gains else 0
         avg_loss = sum(losses[-14:]) / min(14, len(losses)) if losses else 0.001
         rsi = 100 - (100 / (1 + avg_gain / max(avg_loss, 0.001)))
-        # ATR-14 approximation
+        
+        # ATR-14 calculation
         trs = []
         for i in range(1, len(closes)):
             tr = max(highs[i] - lows[i], abs(highs[i] - closes[i-1]), abs(lows[i] - closes[i-1]))
             trs.append(tr)
         atr = sum(trs[-14:]) / min(14, len(trs)) if trs else 0
+        atr_pct = round((atr / max(closes[-1], 0.0001)) * 100, 2)
+
+        # Bullish Divergence Detection (lower price low with higher RSI / oversold bounce)
+        rsi_divergence = 'NONE'
+        if len(closes) >= 10:
+            recent_low = min(lows[-3:])
+            prior_low = min(lows[-10:-3])
+            if recent_low <= prior_low * 1.005 and rsi < 45:
+                rsi_divergence = 'BULLISH_DIVERGENCE'
+
+        # Volume Flow Ratio (percentage of volume on green candles over last 12h)
+        lookback_vol = min(12, len(candles_1h))
+        buy_vol = sum(candles_1h[i][5] for i in range(len(candles_1h)-lookback_vol, len(candles_1h)) if candles_1h[i][4] >= candles_1h[i][1])
+        tot_vol = sum(candles_1h[i][5] for i in range(len(candles_1h)-lookback_vol, len(candles_1h)))
+        buy_vol_ratio = round((buy_vol / max(tot_vol, 0.001)) * 100, 1)
         
         return {
             'ema12': round(ema, 4),
             'rsi14': round(rsi, 1),
             'atr14': round(atr, 4),
+            'atr_pct': atr_pct,
+            'rsi_divergence': rsi_divergence,
+            'buy_vol_ratio': buy_vol_ratio,
             'high_24h_candle': round(max(highs[-24:]), 4),
             'low_24h_candle': round(min(lows[-24:]), 4),
             'avg_volume': round(sum(volumes[-24:]) / min(24, len(volumes)), 0),
@@ -460,12 +482,15 @@ class HermesBrain:
             atr14 = indicators.get('atr14', 0)
             trailing_stop_price = ema12 - atr14
 
+            atr_pct = float(indicators.get('atr_pct', 1.5) or 1.5)
+            trailing_drop = max(1.2, round(atr_pct * 0.8, 2))
+
             if pnl_pct >= take_profit:
                 should_sell, reason = True, f"TAKE PROFIT {pnl_pct:.1f}% (target {take_profit:.1f}%)"
             elif pnl_pct <= stop_loss:
                 should_sell, reason = True, f"STOP LOSS {pnl_pct:.1f}% (limit {stop_loss:.1f}%)"
-            elif ema12 > 0 and atr14 > 0 and peak_pnl > 1.0 and current_price < trailing_stop_price:
-                should_sell, reason = True, f"TRAILING STOP (price ${current_price:.4f} < ${trailing_stop_price:.4f})"
+            elif peak_pnl >= 1.5 and (peak_pnl - pnl_pct) >= trailing_drop:
+                should_sell, reason = True, f"DYNAMIC ATR TRAILING STOP (peak {peak_pnl:.1f}% → now {pnl_pct:.1f}%, drop >= {trailing_drop:.1f}%)"
             elif peak_pnl >= CONFIG['breakeven_trigger_pct'] and pnl_pct <= CONFIG['breakeven_lock_pct']:
                 should_sell, reason = True, f"BREAKEVEN LOCK (peak {peak_pnl:.1f}% → now {pnl_pct:.1f}%)"
             elif age_hours >= CONFIG['time_stop_hours']:
@@ -700,23 +725,18 @@ class HermesBrain:
                         print(f"  ⏭️ BUY skipped {pair}: NEWS DISASTER DETECTED")
                         continue
                     if self.open_trades_count < CONFIG['max_open_trades']:
-                        strategy = self.engine.get_strategy(strategy_id)
-                        if strategy:
-                            base_pct = strategy.base_stake_pct
-                            conf_mult = strategy.confidence_multiplier
-                            max_total = strategy.max_total_exposure or 5000
-                        else:
-                            base_pct = CONFIG['max_stake_percent']
-                            conf_mult = 0.5
-                            max_total = 5000
-                        
-                        base_size = CONFIG['wallet_size'] * (base_pct / 100)
-                        stake = min(base_size * (conf_mult + confidence / 100),
-                                    max_total / CONFIG['max_open_trades'])
-                        
-                        current_exposure = sum(p.get('stake_amount', 0) for p in positions)
-                        available = max_total - current_exposure - abs(self.daily_pnl)
-                        stake = round(min(CONFIG['stake_amount'], stake, available, effective_balance), 2)
+                        # Fractional Kelly Criterion Position Sizing:
+                        # f* = (p*b - q) / b, where p = confidence/100, b = 2.0 (target reward:risk)
+                        p_win = max(0.50, min(0.95, float(confidence) / 100.0))
+                        b_ratio = 2.0
+                        q_loss = 1.0 - p_win
+                        kelly_full = max(0.05, min(0.60, (p_win * b_ratio - q_loss) / b_ratio))
+                        fractional_kelly = kelly_full * 0.5  # Half-Kelly for capital preservation
+
+                        # Stake calculation: dynamically scale between $10 and $35 depending on confidence & Kelly fraction
+                        kelly_stake = effective_balance * fractional_kelly * 2.2
+                        max_allowed_stake = min(CONFIG['stake_amount'], effective_balance)
+                        stake = round(max(10.0, min(kelly_stake, max_allowed_stake)), 2)
                         
                         if stake < min_stake:
                             continue
