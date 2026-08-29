@@ -35,7 +35,7 @@ CONFIG = {
         'BNB/USDT', 'LINK/USDT', 'ADA/USDT', 'AVAX/USDT'
     ],
     # Breakeven Lock: protect profits once they reach a threshold
-    'breakeven_trigger_pct': 1.5,    # activate lock when PnL reaches +1.5%
+    'breakeven_trigger_pct': 1.2,    # activate lock when PnL reaches +1.2%
     'breakeven_lock_pct': 0.3,       # lock exit at +0.3% (guaranteed small profit)
     # Regime-Aware Position Sizing: scale stake by market regime
     'regime_stake_multiplier': {
@@ -44,15 +44,15 @@ CONFIG = {
         'accumulation': 1.0,       # 100% — accumulation
         'recovery': 1.0,           # 100% — recovery
         'range_bound': 1.0,        # 100% — sideways (full allocation for smaller wallets)
-        'high_volatility': 0.70,   # 70%  — volatile
-        'trending_down': 0.50,     # 50%  — bearish
+        'high_volatility': 0.75,   # 75%  — volatile
+        'trending_down': 0.60,     # 60%  — active scalping/bounce
         'distribution': 0.50,      # 50%  — distribution
         'crash': 0.0,              # 0%   — crash = no trade
     },
     # Staged Take Profit: partial exits at intermediate profit levels
     'staged_tp_levels': [
-        {'pnl_pct': 3.0, 'sell_fraction': 0.50},  # at +3% → sell 50%
-        {'pnl_pct': 6.0, 'sell_fraction': 0.50},  # at +6% → sell 50% of remaining
+        {'pnl_pct': 2.5, 'sell_fraction': 0.50},  # at +2.5% → sell 50%
+        {'pnl_pct': 4.0, 'sell_fraction': 0.50},  # at +4% → sell 50% of remaining
     ],
 }
 

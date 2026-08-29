@@ -111,30 +111,30 @@ class StrategyDNA:
     # Regime affinity
     regime_affinity: Dict[str, float] = field(default_factory=lambda: {
         'trending_up': 0.8,
-        'trending_down': 0.1,
-        'high_volatility': 0.3,
-        'range_bound': 0.5,
+        'trending_down': 0.6,
+        'high_volatility': 0.5,
+        'range_bound': 0.7,
         'accumulation': 0.7,
-        'distribution': 0.2,
+        'distribution': 0.3,
         'breakout': 0.9,
         'crash': 0.1,
-        'recovery': 0.7
+        'recovery': 0.8
     })
     
     # Entry rules
-    min_confidence: float = 75.0
-    require_btc_aligned: bool = True
-    btc_min_change: float = 0.5
+    min_confidence: float = 65.0
+    require_btc_aligned: bool = False
+    btc_min_change: float = 0.0
     min_volume_rank: int = 5
-    max_rsi: float = 70.0
-    min_rsi: float = 30.0
+    max_rsi: float = 75.0
+    min_rsi: float = 25.0
     require_support_near: bool = False
     require_breakout: bool = False
     
     # Exit rules
-    take_profit_pct: float = 10.0           # ← AGGRESSIVE: 10%
-    stop_loss_pct: float = -3.0             # ← AGGRESSIVE: 3%
-    trailing_stop_pct: float = 5.0
+    take_profit_pct: float = 4.0            # ← SCALPING: 4% TP
+    stop_loss_pct: float = -2.0             # ← TIGHT SL: 2%
+    trailing_stop_pct: float = 2.0
     time_stop_hours: int = 3
     min_hold_hours: int = 1
     
@@ -221,7 +221,7 @@ class StrategyStore:
             'optimization_count': 0
         }
         self.load()
-        if not self.strategies:
+        if not self.strategies or any(s.min_confidence > 70 for s in self.strategies.values()):
             self._seed_default_strategies()
     
     def load(self):
@@ -246,36 +246,36 @@ class StrategyStore:
             json.dump(data, f, indent=2, default=str)
     
     def _seed_default_strategies(self):
-        """Create seed strategies with NEW aggressive parameters."""
+        """Create seed strategies with Adaptive Scalping parameters."""
         seeds = [
             StrategyDNA(
                 id='trend_follower_v1',
                 name='Trend Follower',
-                description='Buys in a rising trend with strong momentum',
-                regime_affinity={'trending_up': 0.95, 'breakout': 0.8, 'recovery': 0.6},
-                min_confidence=75,
-                require_btc_aligned=True,
-                btc_min_change=1.0,
+                description='Buys in a rising trend with momentum',
+                regime_affinity={'trending_up': 0.95, 'breakout': 0.8, 'recovery': 0.7, 'trending_down': 0.6},
+                min_confidence=65,
+                require_btc_aligned=False,
+                btc_min_change=0.0,
                 min_volume_rank=3,
-                take_profit_pct=10.0,
-                stop_loss_pct=-3.0,
-                trailing_stop_pct=5.0,
+                take_profit_pct=4.0,
+                stop_loss_pct=-2.0,
+                trailing_stop_pct=2.0,
                 base_stake_pct=30.0
             ),
             StrategyDNA(
                 id='dip_buyer_v1',
                 name='Dip Buyer',
-                description='Buys pullbacks within an upward market structure',
-                regime_affinity={'trending_up': 0.7, 'range_bound': 0.9, 'accumulation': 0.95},
-                min_confidence=70,
+                description='Buys pullbacks and oversold bounces',
+                regime_affinity={'trending_up': 0.7, 'range_bound': 0.9, 'accumulation': 0.95, 'trending_down': 0.85},
+                min_confidence=60,
                 require_btc_aligned=False,
                 btc_min_change=-0.5,
                 min_volume_rank=5,
-                max_rsi=45,
-                min_rsi=25,
-                take_profit_pct=10.0,
-                stop_loss_pct=-3.0,
-                trailing_stop_pct=5.0,
+                max_rsi=50,
+                min_rsi=20,
+                take_profit_pct=4.0,
+                stop_loss_pct=-2.0,
+                trailing_stop_pct=2.0,
                 base_stake_pct=30.0,
                 time_stop_hours=24
             ),
@@ -283,15 +283,15 @@ class StrategyStore:
                 id='breakout_hunter_v1',
                 name='Breakout Hunter',
                 description='Buys confirmed breaks above resistance levels',
-                regime_affinity={'breakout': 0.95, 'high_volatility': 0.8, 'trending_up': 0.7},
-                min_confidence=80,
-                require_btc_aligned=True,
-                btc_min_change=0.3,
+                regime_affinity={'breakout': 0.95, 'high_volatility': 0.8, 'trending_up': 0.7, 'trending_down': 0.5},
+                min_confidence=70,
+                require_btc_aligned=False,
+                btc_min_change=0.0,
                 min_volume_rank=2,
                 require_breakout=True,
-                take_profit_pct=10.0,
-                stop_loss_pct=-3.0,
-                trailing_stop_pct=5.0,
+                take_profit_pct=5.0,
+                stop_loss_pct=-2.0,
+                trailing_stop_pct=2.0,
                 base_stake_pct=30.0,
                 max_stake_pct=50.0
             ),
@@ -299,47 +299,47 @@ class StrategyStore:
                 id='range_scalper_v1',
                 name='Range Scalper',
                 description='Buys near range support and exits near range resistance',
-                regime_affinity={'range_bound': 0.95, 'accumulation': 0.7},
-                min_confidence=65,
+                regime_affinity={'range_bound': 0.95, 'accumulation': 0.7, 'trending_down': 0.8},
+                min_confidence=60,
                 require_btc_aligned=False,
                 btc_min_change=-2.0,
                 min_volume_rank=5,
                 require_support_near=True,
-                take_profit_pct=10.0,   # ← NEW: 10%
-                stop_loss_pct=-3.0,     # ← NEW: 3%
-                trailing_stop_pct=5.0,
-                base_stake_pct=30.0,    # ← NEW: 30%
-                time_stop_hours=48,
-                min_hold_hours=2
+                take_profit_pct=3.5,
+                stop_loss_pct=-2.0,
+                trailing_stop_pct=1.5,
+                base_stake_pct=30.0,
+                time_stop_hours=24,
+                min_hold_hours=1
             ),
             StrategyDNA(
                 id='volume_surge_v1',
                 name='Volume Surge',
                 description='Trades confirmed sudden increases in market volume',
-                regime_affinity={'high_volatility': 0.8, 'breakout': 0.7, 'recovery': 0.8},
-                min_confidence=70,
+                regime_affinity={'high_volatility': 0.8, 'breakout': 0.7, 'recovery': 0.8, 'trending_down': 0.7},
+                min_confidence=65,
                 require_btc_aligned=False,
                 btc_min_change=-1.0,
                 min_volume_rank=2,
-                take_profit_pct=10.0,
-                stop_loss_pct=-3.0,
-                trailing_stop_pct=5.0,
+                take_profit_pct=4.0,
+                stop_loss_pct=-2.0,
+                trailing_stop_pct=2.0,
                 base_stake_pct=30.0
             ),
             StrategyDNA(
                 id='safe_haven_v1',
                 name='Safe Haven',
-                description='Defensive strategy requiring the highest confidence',
-                regime_affinity={'trending_up': 0.6, 'accumulation': 0.8, 'recovery': 0.7},
-                min_confidence=85,
-                require_btc_aligned=True,
-                btc_min_change=2.0,
+                description='Defensive strategy requiring high confidence',
+                regime_affinity={'trending_up': 0.6, 'accumulation': 0.8, 'recovery': 0.7, 'trending_down': 0.6},
+                min_confidence=70,
+                require_btc_aligned=False,
+                btc_min_change=0.5,
                 min_volume_rank=2,
-                max_rsi=60,
-                min_rsi=40,
-                take_profit_pct=10.0,
-                stop_loss_pct=-3.0,
-                trailing_stop_pct=5.0,
+                max_rsi=65,
+                min_rsi=35,
+                take_profit_pct=4.0,
+                stop_loss_pct=-2.0,
+                trailing_stop_pct=2.0,
                 base_stake_pct=30.0,
                 max_stake_pct=50.0
             ),
@@ -348,7 +348,7 @@ class StrategyStore:
         for s in seeds:
             self.strategies[s.id] = s
         self.save()
-        print(f"🌱 Seeded {len(seeds)} aggressive strategies (30% stake, 10% TP)")
+        print(f"🌱 Seeded {len(seeds)} adaptive scalping strategies (30% stake, 4% TP, 2% SL)")
     
     def get_best_for_regime(self, regime: str, top_n: int = 3) -> List[StrategyDNA]:
         active = [s for s in self.strategies.values() if s.active]
@@ -945,7 +945,7 @@ Keep reason under 80 characters."""
                     result.get('confirm') is True
                     and result.get('action') == action
                     and isinstance(result.get('confidence'), int)
-                    and result['confidence'] >= 70
+                    and result['confidence'] >= 60
                 )
                 reason = str(result.get('reason') or 'confirmation rejected')[:120]
                 print(
@@ -996,7 +996,7 @@ Article Text (truncated to 2000 chars):
 
     def get_confidence_threshold(self, strategy_id: str) -> float:
         s = self.store.strategies.get(strategy_id)
-        return s.min_confidence if s else 80.0
+        return s.min_confidence if s else 65.0
     
     def get_strategy(self, strategy_id: str) -> Optional[StrategyDNA]:
         return self.store.strategies.get(strategy_id)
