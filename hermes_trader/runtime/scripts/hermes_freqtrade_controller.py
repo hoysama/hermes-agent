@@ -177,8 +177,8 @@ class HermesBrain:
         return f"  {tf_label} (last {len(lines)}):\n" + '\n'.join(lines)
 
     @staticmethod
-    def _candle_summary(candles_1h: list) -> Dict:
-        """Compute advanced technical indicators from 1h candles: EMA12, RSI14, ATR14, Bullish Divergence, Volume Flow."""
+    def _candle_summary(candles_1h: list, candles_15m: Optional[list] = None, orderbook: Optional[dict] = None) -> Dict:
+        """Compute advanced adaptive technical indicators: Multi-timeframe, Kaufman Efficiency Ratio (ER), Adaptive RSI, ATR14, Divergence, Volume Flow, and Exact OKX Fee Breakeven Floor."""
         if not candles_1h or len(candles_1h) < 5:
             return {}
         closes = [c[4] for c in candles_1h]
@@ -187,23 +187,39 @@ class HermesBrain:
         lows = [c[3] for c in candles_1h]
         volumes = [c[5] for c in candles_1h]
         
-        # EMA-12 calculation
-        ema = closes[0]
-        k = 2 / (min(12, len(closes)) + 1)
-        for p in closes[1:]:
-            ema = p * k + ema * (1 - k)
+        # 1. Kaufman Efficiency Ratio (ER) = Directional Price Change / Total Price Path
+        er = 0.5
+        if len(closes) >= 10:
+            direction_move = abs(closes[-1] - closes[-10])
+            total_volatility = sum(abs(closes[i] - closes[i - 1]) for i in range(len(closes) - 9, len(closes)))
+            er = round(direction_move / max(total_volatility, 0.00001), 2)
             
-        # RSI-14 calculation & rolling series
+        # 2. Dynamic Adaptive RSI: Shrinks period (7-9) in fast explosive trends; expands (16-21) in noisy sideways chops
+        adaptive_rsi_period = int(max(7, min(21, round(14 * (1.5 - er)))))
         gains, losses = [], []
         for i in range(1, len(closes)):
             diff = closes[i] - closes[i - 1]
             gains.append(max(diff, 0))
             losses.append(max(-diff, 0))
-        avg_gain = sum(gains[-14:]) / min(14, len(gains)) if gains else 0
-        avg_loss = sum(losses[-14:]) / min(14, len(losses)) if losses else 0.001
-        rsi = 100 - (100 / (1 + avg_gain / max(avg_loss, 0.001)))
         
-        # ATR-14 calculation
+        # Standard RSI-14
+        avg_gain_14 = sum(gains[-14:]) / min(14, len(gains)) if gains else 0
+        avg_loss_14 = sum(losses[-14:]) / min(14, len(losses)) if losses else 0.001
+        rsi_14 = 100 - (100 / (1 + avg_gain_14 / max(avg_loss_14, 0.001)))
+        
+        # Adaptive RSI
+        avg_gain_ad = sum(gains[-adaptive_rsi_period:]) / min(adaptive_rsi_period, len(gains)) if gains else 0
+        avg_loss_ad = sum(losses[-adaptive_rsi_period:]) / min(adaptive_rsi_period, len(losses)) if losses else 0.001
+        adaptive_rsi = 100 - (100 / (1 + avg_gain_ad / max(avg_loss_ad, 0.001)))
+        
+        # 3. Dynamic Adaptive EMA
+        ema = closes[0]
+        ema_period = int(max(8, min(21, round(12 * (1.5 - er)))))
+        k = 2 / (ema_period + 1)
+        for p in closes[1:]:
+            ema = p * k + ema * (1 - k)
+            
+        # 4. ATR-14 calculation
         trs = []
         for i in range(1, len(closes)):
             tr = max(highs[i] - lows[i], abs(highs[i] - closes[i-1]), abs(lows[i] - closes[i-1]))
@@ -211,27 +227,46 @@ class HermesBrain:
         atr = sum(trs[-14:]) / min(14, len(trs)) if trs else 0
         atr_pct = round((atr / max(closes[-1], 0.0001)) * 100, 2)
 
-        # Bullish Divergence Detection (lower price low with higher RSI / oversold bounce)
+        # 5. Bullish Divergence Detection
         rsi_divergence = 'NONE'
         if len(closes) >= 10:
             recent_low = min(lows[-3:])
             prior_low = min(lows[-10:-3])
-            if recent_low <= prior_low * 1.005 and rsi < 45:
+            if recent_low <= prior_low * 1.005 and rsi_14 < 45:
                 rsi_divergence = 'BULLISH_DIVERGENCE'
 
-        # Volume Flow Ratio (percentage of volume on green candles over last 12h)
+        # 6. Volume Flow Ratio
         lookback_vol = min(12, len(candles_1h))
         buy_vol = sum(candles_1h[i][5] for i in range(len(candles_1h)-lookback_vol, len(candles_1h)) if candles_1h[i][4] >= candles_1h[i][1])
         tot_vol = sum(candles_1h[i][5] for i in range(len(candles_1h)-lookback_vol, len(candles_1h)))
         buy_vol_ratio = round((buy_vol / max(tot_vol, 0.001)) * 100, 1)
+
+        # 7. Dynamic OKX Fee & Spread Breakeven Floor (Taker 0.10% x 2 + Spread + 0.05% net profit buffer)
+        spread_pct = 0.05
+        if orderbook and orderbook.get('spread_pct') is not None:
+            spread_pct = float(orderbook['spread_pct'])
+        fee_breakeven_pct = max(0.25, round(0.20 + spread_pct + 0.05, 2))
+
+        # 8. Fast 15m Momentum (if candles_15m available)
+        fast_15m_trend = 'neutral'
+        if candles_15m and len(candles_15m) >= 4:
+            c15_closes = [c[4] for c in candles_15m]
+            fast_15m_trend = 'up' if c15_closes[-1] > c15_closes[-4] else 'down'
         
         return {
             'ema12': round(ema, 4),
-            'rsi14': round(rsi, 1),
+            'adaptive_ema_period': ema_period,
+            'rsi14': round(rsi_14, 1),
+            'adaptive_rsi': round(adaptive_rsi, 1),
+            'adaptive_rsi_period': adaptive_rsi_period,
+            'kaufman_er': er,
             'atr14': round(atr, 4),
             'atr_pct': atr_pct,
             'rsi_divergence': rsi_divergence,
             'buy_vol_ratio': buy_vol_ratio,
+            'spread_pct': round(spread_pct, 3),
+            'fee_breakeven_pct': fee_breakeven_pct,
+            'fast_15m_trend': fast_15m_trend,
             'high_24h_candle': round(max(highs[-24:]), 4),
             'low_24h_candle': round(min(lows[-24:]), 4),
             'avg_volume': round(sum(volumes[-24:]) / min(24, len(volumes)), 0),
@@ -262,44 +297,58 @@ class HermesBrain:
                         'volume_24h': float(ticker.get('quoteVolume', 0)),
                     }
 
-            # Fetch OHLCV candles: 24×1h + 12×4h per pair
-            print(f"  📡 Fetching OHLCV candles ({len(symbols)} pairs × 2 timeframes)...", flush=True)
-            candle_errors = 0
-            for pair in symbols:
-                if pair not in self.market_data:
-                    continue
-                try:
-                    candles_1h = exchange.fetch_ohlcv(pair, '1h', limit=24)
-                    candles_4h = exchange.fetch_ohlcv(pair, '4h', limit=12)
-                    self.market_data[pair]['candles_1h'] = candles_1h
-                    self.market_data[pair]['candles_4h'] = candles_4h
-                    self.market_data[pair]['indicators'] = self._candle_summary(candles_1h)
-                except Exception:
-                    candle_errors += 1
-                    self.market_data[pair]['candles_1h'] = []
-                    self.market_data[pair]['candles_4h'] = []
-                    self.market_data[pair]['indicators'] = {}
-            if candle_errors:
-                print(f"  ⚠️ Candle fetch errors: {candle_errors}/{len(symbols)} pairs", flush=True)
-            else:
-                print(f"  ✅ Candles loaded for {len(symbols)} pairs (24×1h + 12×4h)", flush=True)
-
+            # Fetch Order Books first to compute live spread
             print(f"  📡 Fetching Order Books ({len(symbols)} pairs)...", flush=True)
             for pair in symbols:
                 if pair not in self.market_data:
                     continue
                 try:
                     ob = exchange.fetch_order_book(pair, limit=20)
-                    bids = sum([b[1] for b in ob.get('bids', [])])
-                    asks = sum([a[1] for a in ob.get('asks', [])])
-                    total = bids + asks
-                    bid_ratio = (bids / total * 100) if total > 0 else 50
+                    bids = ob.get('bids', [])
+                    asks = ob.get('asks', [])
+                    tot_bids = sum([b[1] for b in bids])
+                    tot_asks = sum([a[1] for a in asks])
+                    total = tot_bids + tot_asks
+                    bid_ratio = (tot_bids / total * 100) if total > 0 else 50
+                    best_bid = float(bids[0][0]) if bids else 0.0
+                    best_ask = float(asks[0][0]) if asks else 0.0
+                    spread_pct = ((best_ask - best_bid) / best_bid * 100) if best_bid > 0 and best_ask >= best_bid else 0.05
                     self.market_data[pair]['orderbook'] = {
                         'bid_ratio': round(bid_ratio, 1),
-                        'ask_ratio': round(100 - bid_ratio, 1)
+                        'ask_ratio': round(100 - bid_ratio, 1),
+                        'spread_pct': round(spread_pct, 3),
+                        'best_bid': best_bid,
+                        'best_ask': best_ask,
                     }
                 except Exception:
-                    self.market_data[pair]['orderbook'] = {'bid_ratio': 50, 'ask_ratio': 50}
+                    self.market_data[pair]['orderbook'] = {'bid_ratio': 50, 'ask_ratio': 50, 'spread_pct': 0.05}
+
+            # Multi-Timeframe OHLCV: 24×15m + 24×1h + 12×4h
+            print(f"  📡 Fetching Multi-Timeframe OHLCV ({len(symbols)} pairs × 3 timeframes [15m, 1h, 4h])...", flush=True)
+            candle_errors = 0
+            for pair in symbols:
+                if pair not in self.market_data:
+                    continue
+                try:
+                    candles_15m = exchange.fetch_ohlcv(pair, '15m', limit=24)
+                    candles_1h = exchange.fetch_ohlcv(pair, '1h', limit=24)
+                    candles_4h = exchange.fetch_ohlcv(pair, '4h', limit=12)
+                    self.market_data[pair]['candles_15m'] = candles_15m
+                    self.market_data[pair]['candles_1h'] = candles_1h
+                    self.market_data[pair]['candles_4h'] = candles_4h
+                    self.market_data[pair]['indicators'] = self._candle_summary(
+                        candles_1h, candles_15m=candles_15m, orderbook=self.market_data[pair].get('orderbook')
+                    )
+                except Exception:
+                    candle_errors += 1
+                    self.market_data[pair]['candles_15m'] = []
+                    self.market_data[pair]['candles_1h'] = []
+                    self.market_data[pair]['candles_4h'] = []
+                    self.market_data[pair]['indicators'] = {}
+            if candle_errors:
+                print(f"  ⚠️ Candle fetch errors: {candle_errors}/{len(symbols)} pairs", flush=True)
+            else:
+                print(f"  ✅ Candles loaded for {len(symbols)} pairs (15m + 1h + 4h)", flush=True)
 
             if not self.market_data:
                 raise RuntimeError("OKX returned no configured tickers")
@@ -499,14 +548,16 @@ class HermesBrain:
             
             trailing_drop = max(1.2, round(atr_pct * 0.8, 2))
 
+            fee_breakeven = float(indicators.get('fee_breakeven_pct', CONFIG.get('breakeven_lock_pct', 0.30)))
+
             if pnl_pct >= dynamic_tp:
                 should_sell, reason = True, f"DYNAMIC TAKE PROFIT {pnl_pct:.1f}% (target {dynamic_tp:.1f}%)"
             elif pnl_pct <= dynamic_sl:
                 should_sell, reason = True, f"DYNAMIC ATR STOP LOSS {pnl_pct:.1f}% (limit {dynamic_sl:.1f}%)"
             elif peak_pnl >= 1.5 and (peak_pnl - pnl_pct) >= trailing_drop:
                 should_sell, reason = True, f"DYNAMIC ATR TRAILING STOP (peak {peak_pnl:.1f}% → now {pnl_pct:.1f}%, drop >= {trailing_drop:.1f}%)"
-            elif peak_pnl >= dynamic_be_trigger and pnl_pct <= CONFIG['breakeven_lock_pct']:
-                should_sell, reason = True, f"DYNAMIC BREAKEVEN LOCK (peak {peak_pnl:.1f}% → now {pnl_pct:.1f}%)"
+            elif peak_pnl >= dynamic_be_trigger and pnl_pct <= fee_breakeven:
+                should_sell, reason = True, f"DYNAMIC FEE BREAKEVEN LOCK (peak {peak_pnl:.1f}% → now {pnl_pct:.1f}%, fee_floor {fee_breakeven:.2f}%)"
             elif age_hours >= dynamic_time_limit:
                 should_sell, reason = True, f"DYNAMIC TIME STOP {age_hours:.1f}h (limit {dynamic_time_limit:.1f}h, pnl {pnl_pct:+.2f}%)"
             elif pnl_pct < -4.0 and self.check_news_disaster(pair):
@@ -721,9 +772,9 @@ class HermesBrain:
                 if current_open_count >= dynamic_max_trades:
                     print(f"  ⏭️ BUY skipped: dynamic max open trades reached ({current_open_count}/{dynamic_max_trades} for {primary_regime})")
                     break
-                threshold = self.engine.get_confidence_threshold(strategy_id)
+                threshold = self.engine.get_confidence_threshold(strategy_id, regime=primary_regime)
                 if confidence >= threshold:
-                    loss_ok, loss_reason = self.engine.loss_guard(strategy_id, pair)
+                    loss_ok, loss_reason = self.engine.loss_guard(strategy_id, pair, current_regime=primary_regime)
                     if not loss_ok:
                         print(f"  ⏭️ BUY skipped {pair}: {loss_reason}")
                         continue

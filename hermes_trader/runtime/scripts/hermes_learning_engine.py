@@ -192,13 +192,35 @@ class HermesLearningEngine:
             imported += 1
         return imported
 
-    def loss_guard(self, strategy_id: str, pair: str) -> tuple[bool, str]:
-        """Block repeating a recently observed losing pattern."""
+    def loss_guard(self, strategy_id: str, pair: str, current_regime: Optional[str] = None) -> tuple[bool, str]:
+        """Block repeating a recently observed losing pattern with dynamic regime and time decay."""
         recent = [t for t in self.archive.trades[-20:]
                   if t.get('strategy_id') == strategy_id and t.get('pair') == pair]
         losses = [t for t in recent if float(t.get('pnl', 0) or 0) < 0]
-        if len(losses) >= 2:
-            return False, f"repeated loss pattern: {strategy_id} on {pair}"
+        if not losses:
+            return True, "loss guard passed"
+            
+        # Dynamic Time Decay: Check age of latest loss
+        latest_loss = losses[-1]
+        loss_time_str = latest_loss.get('closed_at') or latest_loss.get('timestamp')
+        loss_age_hours = 999.0
+        if loss_time_str:
+            try:
+                from datetime import timezone
+                val = datetime.fromisoformat(str(loss_time_str).replace('Z', '+00:00'))
+                if val.tzinfo is None:
+                    val = val.replace(tzinfo=timezone.utc)
+                loss_age_hours = max(0.0, (datetime.now(timezone.utc) - val).total_seconds() / 3600)
+            except Exception:
+                pass
+
+        # Regime-Adaptive Recovery: If market has entered trending_up/breakout and loss is older than 1.5h, allow retry
+        regime_str = str(current_regime or '').lower()
+        if ('trend_up' in regime_str or 'breakout' in regime_str) and loss_age_hours >= 1.5:
+            return True, f"loss guard decayed ({loss_age_hours:.1f}h ago in prior regime)"
+
+        if len(losses) >= 2 and loss_age_hours < 4.0:
+            return False, f"repeated loss pattern: {strategy_id} on {pair} (last {loss_age_hours:.1f}h ago)"
         return True, "loss guard passed"
 
     def save_lessons(self):

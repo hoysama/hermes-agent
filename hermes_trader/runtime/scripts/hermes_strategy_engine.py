@@ -792,16 +792,39 @@ class StrategyEngine:
         candle_context = ""
         indicators = data.get('indicators', {})
         if indicators:
-            candle_context += f"\nTechnical: EMA12=${indicators.get('ema12', 0):.4f}, RSI14={indicators.get('rsi14', 50):.0f}, ATR14={indicators.get('atr14', 0):.4f} ({indicators.get('atr_pct', 0):.2f}%), Trend={indicators.get('trend', '?')}"
+            kaufman_er = indicators.get('kaufman_er', 0.5)
+            adaptive_rsi = indicators.get('adaptive_rsi', indicators.get('rsi14', 50))
+            ad_period = indicators.get('adaptive_rsi_period', 14)
+            fee_be = indicators.get('fee_breakeven_pct', 0.30)
+            candle_context += (
+                f"\nTechnical: EMA12=${indicators.get('ema12', 0):.4f} (period {indicators.get('adaptive_ema_period', 12)}), "
+                f"Adaptive RSI({ad_period})={adaptive_rsi:.0f}, RSI14={indicators.get('rsi14', 50):.0f}, "
+                f"Kaufman ER={kaufman_er:.2f}, ATR14={indicators.get('atr14', 0):.4f} ({indicators.get('atr_pct', 0):.2f}%), "
+                f"OKX Fee Floor={fee_be:.2f}%, Trend={indicators.get('trend', '?')}"
+            )
             if indicators.get('rsi_divergence') and indicators.get('rsi_divergence') != 'NONE':
                 candle_context += f", Divergence={indicators.get('rsi_divergence')} 🟢"
             if indicators.get('buy_vol_ratio') is not None:
                 candle_context += f", Volume Flow={indicators.get('buy_vol_ratio')}% Buyer Volume"
+            if indicators.get('fast_15m_trend') and indicators.get('fast_15m_trend') != 'neutral':
+                candle_context += f", 15m Fast Trend={indicators.get('fast_15m_trend').upper()}"
             candle_context += f", 24h Range: ${indicators.get('low_24h_candle', 0):.4f}-${indicators.get('high_24h_candle', 0):.4f}"
             
         ob = data.get('orderbook', {})
         if ob:
-            candle_context += f"\nOrder Book: {ob.get('bid_ratio', 50)}% Bids vs {ob.get('ask_ratio', 50)}% Asks"
+            candle_context += f"\nOrder Book: {ob.get('bid_ratio', 50)}% Bids vs {ob.get('ask_ratio', 50)}% Asks (Spread: {ob.get('spread_pct', 0.05)}%)"
+
+        # Adaptive Multi-Timeframe Context
+        candles_15m = data.get('candles_15m', [])
+        if candles_15m and (regime in ('high_volatility', 'scalping') or len(candles_15m) >= 4):
+            recent_15m = candles_15m[-6:]
+            c15_lines = []
+            for c in recent_15m:
+                from datetime import datetime as _dt
+                t_str = _dt.utcfromtimestamp(c[0] / 1000).strftime('%H:%M') if c[0] > 1e9 else '??:??'
+                direction = '▲' if c[4] >= c[1] else '▼'
+                c15_lines.append(f"  {t_str} {direction} {c[1]:.2f}→{c[4]:.2f} (H{c[2]:.2f}/L{c[3]:.2f})")
+            candle_context += f"\n15m Fast Candles (last {len(recent_15m)}):\n" + '\n'.join(c15_lines)
 
         candles_1h = data.get('candles_1h', [])
         if candles_1h:
@@ -812,9 +835,9 @@ class StrategyEngine:
                 t_str = _dt.utcfromtimestamp(c[0] / 1000).strftime('%H:%M') if c[0] > 1e9 else '??:??'
                 direction = '▲' if c[4] >= c[1] else '▼'
                 candle_lines.append(f"  {t_str} {direction} {c[1]:.2f}→{c[4]:.2f} (H{c[2]:.2f}/L{c[3]:.2f})")
-            candle_context += f"\n1h Candles (last {len(recent)}):\n" + '\n'.join(candle_lines)
+            candle_context += f"\n1h Macro Candles (last {len(recent)}):\n" + '\n'.join(candle_lines)
 
-        prompt = f"""You are Hermes AI Trading Brain - Dynamic Strategy Engine v3.0 (AGGRESSIVE MODE).
+        prompt = f"""You are Hermes AI Trading Brain - Dynamic Strategy Engine v4.0 (ADAPTIVE MODE).
 Analyze {pair} using active strategies.
 
 Market: {pair} at ${data['price']:.4f}, 24h: {data['change_24h']:.2f}%
@@ -828,7 +851,7 @@ Active Strategies:
 Rules:
 1. Output ONLY valid JSON: {{"action": "buy"|"sell"|"neutral", "confidence": <int 0-100>, "strategy_id": "<matching strategy>", "reason": "<Arabic rationale>"}}
 2. For an OPEN POSITION, decide HOLD as `neutral` unless there is a concrete exit reason; use `sell` only when exit is justified by trend deterioration, risk, or a valid target/stop condition. Never return `buy` for an open position.
-3. For a new pair, evaluate entry. If RSI Divergence is BULLISH_DIVERGENCE or buyer volume > 50% near support, favor BUY bounce with confidence 60-75%.
+3. For a new pair, evaluate entry. In trending_up or breakout with high Kaufman ER (>0.55) or buyer volume > 50%, favor BUY with confidence 60-85%. In volatile or down regimes, require strict confirmation.
 4. Write reason in ARABIC and keep it under 80 characters.
 5. Do not explain your reasoning. Return only the JSON object."""
 
@@ -945,16 +968,18 @@ Keep reason under 80 characters."""
                     raise ValueError(f"confirmation HTTP {res.status_code}: {res.text[:160]}")
                 raw, _, _ = extract_completion(res)
                 result = parse_llm_json(raw)
+                regime_lower = str(regime).lower()
+                min_conf = 55 if ('trend_up' in regime_lower or 'breakout' in regime_lower) else (75 if ('down' in regime_lower or 'crash' in regime_lower) else 60)
                 confirmed = (
                     result.get('confirm') is True
                     and result.get('action') == action
                     and isinstance(result.get('confidence'), int)
-                    and result['confidence'] >= 60
+                    and result['confidence'] >= min_conf
                 )
                 reason = str(result.get('reason') or 'confirmation rejected')[:120]
                 print(
                     f"  {'✅' if confirmed else '⛔'} {pair} {action.upper()} confirmation ({model}): "
-                    f"{'accepted' if confirmed else 'rejected'} ({result.get('confidence', 0)}%)"
+                    f"{'accepted' if confirmed else 'rejected'} ({result.get('confidence', 0)}%, req >={min_conf}%)"
                 )
                 return confirmed, reason
             except Exception as exc:
@@ -998,9 +1023,23 @@ Article Text (truncated to 2000 chars):
                 continue
         return False
 
-    def get_confidence_threshold(self, strategy_id: str) -> float:
+    def get_confidence_threshold(self, strategy_id: str, regime: Optional[str] = None) -> float:
         s = self.store.strategies.get(strategy_id)
-        return s.min_confidence if s else 65.0
+        base = s.min_confidence if s else 65.0
+        regime_lower = str(regime or (self.current_regime or {}).get('primary_regime', '')).lower()
+        if 'trend_up' in regime_lower or 'breakout' in regime_lower:
+            regime_target = 60.0
+        elif 'range' in regime_lower or 'accum' in regime_lower or 'recovery' in regime_lower:
+            regime_target = 68.0
+        elif 'volatil' in regime_lower or 'trend_down' in regime_lower:
+            regime_target = 80.0
+        elif 'crash' in regime_lower:
+            regime_target = 95.0
+        else:
+            regime_target = 65.0
+        
+        # Weighted blend of strategy's baseline confidence and current market regime requirement
+        return round(max(55.0, min(95.0, (base * 0.4) + (regime_target * 0.6))), 1)
     
     def get_strategy(self, strategy_id: str) -> Optional[StrategyDNA]:
         return self.store.strategies.get(strategy_id)
@@ -1033,8 +1072,8 @@ Article Text (truncated to 2000 chars):
         return {'take_profit_pct': target, 'stop_loss_pct': -stop,
                 'volatility_pct': volatility, 'age_hours': age}
 
-    def loss_guard(self, strategy_id: str, pair: str) -> tuple[bool, str]:
-        return self.learning_engine.loss_guard(strategy_id, pair)
+    def loss_guard(self, strategy_id: str, pair: str, current_regime: Optional[str] = None) -> tuple[bool, str]:
+        return self.learning_engine.loss_guard(strategy_id, pair, current_regime=current_regime)
     
     def record_trade_result(self, strategy_id: str, pnl: float, pnl_pct: float, hold_hours: float):
         self.store.record_trade(strategy_id, pnl, pnl_pct, hold_hours)
