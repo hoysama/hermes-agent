@@ -1006,26 +1006,30 @@ Article Text (truncated to 2000 chars):
         return self.store.strategies.get(strategy_id)
 
     def dynamic_exit_levels(self, position: Dict, market: Dict, decision: Dict) -> Dict[str, float]:
-        """Derive adaptive exits from volatility, confidence, age, and regime."""
+        """Derive adaptive exits from volatility, ATR, confidence, age, and regime."""
         price = float(market.get('price', 0) or 0)
         high = float(market.get('high_24h', 0) or 0)
         low = float(market.get('low_24h', 0) or 0)
         change = abs(float(market.get('change_24h', 0) or 0))
         range_pct = ((high - low) / price * 100) if price and high >= low else 0.0
-        volatility = max(change, range_pct * 0.35, 0.5)
+        
+        indicators = market.get('indicators', {}) if isinstance(market, dict) else {}
+        atr_pct = float(indicators.get('atr_pct', 0) or 0)
+        base_volatility = max(change, range_pct * 0.35, 0.5)
+        volatility = max(base_volatility, atr_pct) if atr_pct > 0 else base_volatility
+
         confidence = float(decision.get('confidence', 50) or 50)
         age = self._position_age_hours(position)
         regime = str(decision.get('regime', '')).lower()
 
-        # Wider targets for volatile/trending markets, tighter protection as a
-        # position ages. All values are bounded to prevent model-driven extremes.
-        target = max(1.5, min(8.0, volatility * 0.9 + confidence / 100 * 1.5))
-        stop = max(0.8, min(5.0, volatility * 0.55 + 0.8))
+        # Adaptive ATR / Volatility bounds
+        target = max(2.0, min(9.0, volatility * 1.4 + confidence / 100 * 1.5))
+        stop = max(1.0, min(3.5, volatility * 0.85 + 0.6))
         if 'trend' in regime or 'breakout' in regime:
-            target = min(8.0, target * 1.2)
+            target = min(10.0, target * 1.25)
         if age >= 2:
-            target = max(1.2, target * 0.85)
-            stop = max(0.8, stop * 0.9)
+            target = max(1.5, target * 0.85)
+            stop = max(1.0, stop * 0.9)
         return {'take_profit_pct': target, 'stop_loss_pct': -stop,
                 'volatility_pct': volatility, 'age_hours': age}
 

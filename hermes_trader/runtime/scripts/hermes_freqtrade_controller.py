@@ -308,11 +308,16 @@ class HermesBrain:
             print(f"  ❌ OKX market data unavailable: {e}", flush=True)
             return {'error': str(e)}
 
-    def check_risk_limits(self) -> Tuple[bool, str]:
-        if self.daily_pnl <= -CONFIG['max_daily_loss']:
-            return False, f"Daily loss limit reached (${self.daily_pnl:.2f})"
-        if self.weekly_pnl <= -CONFIG['max_weekly_loss']:
-            return False, f"Weekly loss limit reached (${self.weekly_pnl:.2f})"
+    def check_risk_limits(self, current_balance: float = None) -> Tuple[bool, str]:
+        # Dynamic circuit breaker: 15% daily loss limit, 35% weekly loss limit
+        ref_balance = current_balance if current_balance and current_balance > 0 else 100.0
+        dynamic_daily_limit = max(10.0, ref_balance * 0.15)
+        dynamic_weekly_limit = max(25.0, ref_balance * 0.35)
+        
+        if self.daily_pnl <= -dynamic_daily_limit:
+            return False, f"Dynamic daily loss limit reached (${self.daily_pnl:.2f} <= -${dynamic_daily_limit:.2f})"
+        if self.weekly_pnl <= -dynamic_weekly_limit:
+            return False, f"Dynamic weekly loss limit reached (${self.weekly_pnl:.2f} <= -${dynamic_weekly_limit:.2f})"
         return True, "Risk check passed"
 
     def get_open_positions(self) -> List[Dict]:
@@ -345,10 +350,13 @@ class HermesBrain:
         except (requests.RequestException, ValueError, TypeError, KeyError) as exc:
             print(f"  ⚠️ Balance unavailable; blocking new entries: {exc}")
         return None
+
     def execute_buy(self, pair: str, stake: float = None) -> Optional[int]:
         try:
             auth = (FREQTRADE_API['username'], FREQTRADE_API['password'])
             payload = {'pair': pair}
+            if stake and stake > 0:
+                payload['stake_amount'] = float(stake)
             res = requests.post(f"{FREQTRADE_API['url']}/api/v1/forceenter", auth=auth, json=payload, timeout=30)
             if res.status_code == 200:
                 result = res.json()
@@ -472,29 +480,35 @@ class HermesBrain:
                             'trade_id': trade_id,
                         })
                         self.save_state()
-
             should_sell = False
             reason = ''
             
             indicators = self.market_data.get(pair, {}).get('indicators', {})
-            current_price = self.market_data.get(pair, {}).get('price', 0)
-            ema12 = indicators.get('ema12', 0)
-            atr14 = indicators.get('atr14', 0)
-            trailing_stop_price = ema12 - atr14
-
+            # Dynamic volatility-adaptive levels per pair
             atr_pct = float(indicators.get('atr_pct', 1.5) or 1.5)
+            dynamic_sl = -max(1.2, min(3.5, round(atr_pct * 1.2, 2)))
+            dynamic_tp = max(2.5, min(8.0, round(atr_pct * 2.5, 2)))
+            dynamic_be_trigger = max(1.0, round(atr_pct * 1.0, 2))
+            
+            # Dynamic Time Decay based on strategy category
+            strat_name = str(decision.get('strategy_id', '')).lower()
+            if any(k in strat_name for k in ('scalp', 'dip', 'breakout')):
+                dynamic_time_limit = 2.0
+            else:
+                dynamic_time_limit = 5.0 if pnl_pct > -0.5 else 2.5
+            
             trailing_drop = max(1.2, round(atr_pct * 0.8, 2))
 
-            if pnl_pct >= take_profit:
-                should_sell, reason = True, f"TAKE PROFIT {pnl_pct:.1f}% (target {take_profit:.1f}%)"
-            elif pnl_pct <= stop_loss:
-                should_sell, reason = True, f"STOP LOSS {pnl_pct:.1f}% (limit {stop_loss:.1f}%)"
+            if pnl_pct >= dynamic_tp:
+                should_sell, reason = True, f"DYNAMIC TAKE PROFIT {pnl_pct:.1f}% (target {dynamic_tp:.1f}%)"
+            elif pnl_pct <= dynamic_sl:
+                should_sell, reason = True, f"DYNAMIC ATR STOP LOSS {pnl_pct:.1f}% (limit {dynamic_sl:.1f}%)"
             elif peak_pnl >= 1.5 and (peak_pnl - pnl_pct) >= trailing_drop:
                 should_sell, reason = True, f"DYNAMIC ATR TRAILING STOP (peak {peak_pnl:.1f}% → now {pnl_pct:.1f}%, drop >= {trailing_drop:.1f}%)"
-            elif peak_pnl >= CONFIG['breakeven_trigger_pct'] and pnl_pct <= CONFIG['breakeven_lock_pct']:
-                should_sell, reason = True, f"BREAKEVEN LOCK (peak {peak_pnl:.1f}% → now {pnl_pct:.1f}%)"
-            elif age_hours >= CONFIG['time_stop_hours']:
-                should_sell, reason = True, f"TIME STOP {age_hours:.1f}h (limit {CONFIG['time_stop_hours']}h, pnl {pnl_pct:+.2f}%)"
+            elif peak_pnl >= dynamic_be_trigger and pnl_pct <= CONFIG['breakeven_lock_pct']:
+                should_sell, reason = True, f"DYNAMIC BREAKEVEN LOCK (peak {peak_pnl:.1f}% → now {pnl_pct:.1f}%)"
+            elif age_hours >= dynamic_time_limit:
+                should_sell, reason = True, f"DYNAMIC TIME STOP {age_hours:.1f}h (limit {dynamic_time_limit:.1f}h, pnl {pnl_pct:+.2f}%)"
             elif pnl_pct < -4.0 and self.check_news_disaster(pair):
                 should_sell, reason = True, f"PANIC SELL (NEWS DISASTER DETECTED)"
             elif action == 'sell' and confidence >= 70:
@@ -619,50 +633,53 @@ class HermesBrain:
 
     def run_cycle(self) -> Dict:
         print("=" * 70)
-        print(f"🧠 HERMES v3.0 AGGRESSIVE (30% stake, 10% TP)")
+        print(f"🧠 HERMES v3.0 FULLY DYNAMIC")
         print(f"   Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"   Provider: nararouter ({ANALYSIS_MODEL} analysis -> {DECISION_MODEL} decisions)")
         print("=" * 70)
 
-        can_trade, risk_reason = self.check_risk_limits()
-        if not can_trade:
-            print(f"\n⛔ RISK HALT: {risk_reason}")
-            return {'status': 'risk_halted'}
-
         # Phase 1: Market Data
         print("\n📊 Phase 1: Market Analysis")
         positions = self.get_open_positions()
-        open_pairs = [p.get('pair') for p in positions if isinstance(p, dict) and p.get('pair')]
-        market_data = self.fetch_market_data(extra_pairs=open_pairs)
+        open_pairs = {p.get('pair') for p in positions if isinstance(p, dict) and p.get('pair')}
+        market_data = self.fetch_market_data(extra_pairs=list(open_pairs))
         if 'error' in market_data:
             print("  ⛔ Market data unavailable; execution blocked", flush=True)
             return {'status': 'market_data_unavailable', 'buys': 0, 'sells': 0}
 
-        # Read positions before LLM analysis so each open position receives
-        # explicit HOLD/SELL context rather than being treated as an entry.
+        free_balance = self.get_available_balance()
+        total_wallet = (free_balance or 100.0) + sum(float(p.get('stake_amount', 0) or 0) for p in positions)
+        can_trade, risk_reason = self.check_risk_limits(current_balance=total_wallet)
+        if not can_trade:
+            print(f"\n⛔ RISK HALT: {risk_reason}")
+            return {'status': 'risk_halted'}
 
-        # Phase 2: Strategy Selection
+        # Phase 2: Dynamic Strategy Selection
         print("\n🧬 Phase 2: Dynamic Strategy Selection")
         engine_result = self.engine.analyze_market_and_select(self.market_data, positions)
-        regime = engine_result['regime']
-        decisions = engine_result['decisions']
+        regime = engine_result.get('regime', {})
+        decisions = engine_result.get('decisions', {})
         
-        # Freqtrade is execution-only: if the analysis model did not classify the market,
-        # Hermes must not submit any order.
         if regime.get('decision_source') == 'none' or regime.get('primary_regime') == 'llm_unavailable':
             print(f"  ⛔ No analysis model market decision — execution blocked")
             decisions = {pair: {**d, 'action': 'neutral', 'confidence': 0} for pair, d in decisions.items()}
 
-        # Phase 3: Positions
+        primary_regime = regime.get('primary_regime', 'range_bound')
+        self.last_decisions = decisions
+
+        # Dynamic Multi-Trade Capacity derived from Market Regime
+        if primary_regime in ('trending_up', 'breakout', 'accumulation', 'recovery'):
+            dynamic_max_trades = 4
+        elif primary_regime == 'range_bound':
+            dynamic_max_trades = 3
+        elif primary_regime in ('high_volatility', 'trending_down'):
+            dynamic_max_trades = 2
+        else:
+            dynamic_max_trades = 0
+
+        # Phase 3: Current Positions & Rotation
         print("\n📈 Phase 3: Current Positions")
-        self.open_trades_count = len(positions)  # source of truth is Freqtrade
-        free_balance = self.get_available_balance()
         print(f"  💰 Available {CONFIG['stake_currency']}: {free_balance:.2f}" if free_balance is not None else "  ⛔ Available balance unavailable; BUY blocked")
-        open_pairs = {
-            position.get('pair')
-            for position in positions
-            if isinstance(position, dict) and position.get('pair')
-        }
         if positions:
             for p in positions:
                 pnl = p.get('profit_pct', 0)
@@ -672,9 +689,10 @@ class HermesBrain:
             print("  No open positions")
 
         # Phase 4: Execution
-        print("\n⚡ Phase 4: Execution (v3.0 Aggressive)")
+        print(f"\n⚡ Phase 4: Execution (Capacity: {len(open_pairs)}/{dynamic_max_trades} for {primary_regime})")
         executed_buys = 0
         executed_sells = 0
+        current_open_count = len(open_pairs)
 
         for pair, decision in decisions.items():
             action = decision.get('action', 'neutral')
@@ -682,32 +700,26 @@ class HermesBrain:
             strategy_id = decision.get('strategy_id', 'none')
             
             if action == 'buy':
-                # Refresh live balance to avoid stale state from preceding executions
                 current_free = self.get_available_balance()
                 if current_free is not None:
                     free_balance = current_free
                 if free_balance is None:
                     print(f"  ⏭️ BUY skipped {pair}: live balance unavailable")
                     continue
-                min_stake = 5.0
+                min_stake = 5.50  # OKX order limit floor
                 effective_balance = free_balance * 0.985
-                # Regime-Aware Sizing: scale down in risky markets
-                regime_mult = CONFIG.get('regime_stake_multiplier', {}).get(
-                    regime.get('primary_regime', 'range_bound'), 1.0
-                )
+                regime_mult = CONFIG.get('regime_stake_multiplier', {}).get(primary_regime, 1.0)
                 effective_balance *= regime_mult
                 if regime_mult < 1.0:
-                    print(f"  📉 Regime sizing: {regime.get('primary_regime')} → {regime_mult:.0%} of balance")
+                    print(f"  📉 Regime sizing: {primary_regime} → {regime_mult:.0%} of balance")
                 if effective_balance < min_stake:
                     print(f"  ⏭️ BUY skipped {pair}: insufficient balance after regime adjustment (${effective_balance:.2f} < ${min_stake:.2f})")
                     continue
-                # Freqtrade permits only one open spot position per pair. Do
-                # not turn a known duplicate into a noisy forceenter failure.
                 if pair in open_pairs:
                     print(f"  ⏭️ BUY skipped {pair}: position already open")
                     continue
-                if self.open_trades_count >= CONFIG['max_open_trades']:
-                    print("  ⏭️ BUY skipped: maximum open trades reached")
+                if current_open_count >= dynamic_max_trades:
+                    print(f"  ⏭️ BUY skipped: dynamic max open trades reached ({current_open_count}/{dynamic_max_trades} for {primary_regime})")
                     break
                 threshold = self.engine.get_confidence_threshold(strategy_id)
                 if confidence >= threshold:
@@ -716,7 +728,7 @@ class HermesBrain:
                         print(f"  ⏭️ BUY skipped {pair}: {loss_reason}")
                         continue
                     confirmed, confirmation_reason = self.engine.confirm_trade_signal(
-                        pair, decision, market_data[pair], regime.get('primary_regime', 'unknown')
+                        pair, decision, market_data[pair], primary_regime
                     )
                     if not confirmed:
                         print(f"  ⏭️ BUY skipped {pair}: confirmation rejected ({confirmation_reason})")
@@ -724,27 +736,29 @@ class HermesBrain:
                     if self.check_news_disaster(pair):
                         print(f"  ⏭️ BUY skipped {pair}: NEWS DISASTER DETECTED")
                         continue
-                    if self.open_trades_count < CONFIG['max_open_trades']:
-                        # Fractional Kelly Criterion Position Sizing:
-                        # f* = (p*b - q) / b, where p = confidence/100, b = 2.0 (target reward:risk)
+                    if current_open_count < dynamic_max_trades:
+                        # Dynamic Multi-Slot Fractional Kelly Sizing:
+                        available_slots = max(1, dynamic_max_trades - current_open_count)
+                        slot_capital = effective_balance / available_slots
+
                         p_win = max(0.50, min(0.95, float(confidence) / 100.0))
                         b_ratio = 2.0
                         q_loss = 1.0 - p_win
                         kelly_full = max(0.05, min(0.60, (p_win * b_ratio - q_loss) / b_ratio))
-                        fractional_kelly = kelly_full * 0.5  # Half-Kelly for capital preservation
+                        fractional_kelly = kelly_full * 0.5
 
-                        # Stake calculation: dynamically scale between $10 and $35 depending on confidence & Kelly fraction
-                        kelly_stake = effective_balance * fractional_kelly * 2.2
-                        max_allowed_stake = min(CONFIG['stake_amount'], effective_balance)
-                        stake = round(max(10.0, min(kelly_stake, max_allowed_stake)), 2)
+                        calculated_stake = slot_capital * (fractional_kelly * 2.2)
+                        max_trade_cap = effective_balance * 0.40  # 40% wallet cap per trade
+                        stake = round(max(min_stake, min(calculated_stake, max_trade_cap, effective_balance)), 2)
                         
-                        if stake < min_stake:
+                        if stake < min_stake or stake > effective_balance:
                             continue
 
                         trade_id = self.execute_buy(pair, stake)
                         if trade_id:
                             executed_buys += 1
-                            self.open_trades_count += 1
+                            current_open_count += 1
+                            self.open_trades_count = current_open_count
                             free_balance -= stake
                             open_pairs.add(pair)
                             self.trade_log.append({
@@ -754,11 +768,11 @@ class HermesBrain:
                                 'confidence': confidence,
                                 'stake': stake,
                                 'strategy_id': strategy_id,
-                                'regime': regime.get('primary_regime', 'unknown')
+                                'regime': primary_regime
                             })
                             self.save_state()
                     else:
-                        print(f"  ⏸️  {pair}: Max trades ({CONFIG['max_open_trades']})")
+                        print(f"  ⏸️  {pair}: Max trades ({current_open_count}/{dynamic_max_trades})")
 
         # Sell execution
         for pos in positions:
