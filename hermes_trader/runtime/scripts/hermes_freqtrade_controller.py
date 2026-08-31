@@ -542,9 +542,9 @@ class HermesBrain:
             # Dynamic Time Decay based on strategy category
             strat_name = str(decision.get('strategy_id', '')).lower()
             if any(k in strat_name for k in ('scalp', 'dip', 'breakout')):
-                dynamic_time_limit = 2.0
+                dynamic_time_limit = 3.0
             else:
-                dynamic_time_limit = 5.0 if pnl_pct > -0.5 else 2.5
+                dynamic_time_limit = 6.0 if pnl_pct > -0.5 else 3.5
             
             trailing_drop = max(1.2, round(atr_pct * 0.8, 2))
 
@@ -562,14 +562,21 @@ class HermesBrain:
                 should_sell, reason = True, f"DYNAMIC TIME STOP {age_hours:.1f}h (limit {dynamic_time_limit:.1f}h, pnl {pnl_pct:+.2f}%)"
             elif pnl_pct < -4.0 and self.check_news_disaster(pair):
                 should_sell, reason = True, f"PANIC SELL (NEWS DISASTER DETECTED)"
-            elif action == 'sell' and confidence >= 70:
-                confirmed, confirm_reason = self.engine.confirm_trade_signal(
-                    pair, decision, pair_market, regime.get('primary_regime', 'range_bound'), position
-                )
-                if confirmed:
-                    should_sell, reason = True, f"EXIT REVIEW SELL ({confirm_reason})"
+            elif action == 'sell' and confidence >= 80:
+                # Solution 3: Minimum Trade Holding Lock (1.0 Hour breathing room)
+                if age_hours < 1.0:
+                    print(f"  ⏭️ SELL skipped {pair}: trade locked for breathing room (age {age_hours:.2f}h < 1.0h)")
+                # Solution 1: Noise Zone Protection - Prevent premature AI cuts in oscillation noise
+                elif dynamic_sl < pnl_pct < fee_breakeven:
+                    print(f"  ⏭️ SELL skipped {pair}: protected in noise zone (pnl {pnl_pct:+.2f}%, sl {dynamic_sl:.2f}%)")
                 else:
-                    print(f"  ⏭️ SELL skipped {pair}: confirmation rejected ({confirm_reason})")
+                    confirmed, confirm_reason = self.engine.confirm_trade_signal(
+                        pair, decision, pair_market, regime.get('primary_regime', 'range_bound'), position
+                    )
+                    if confirmed:
+                        should_sell, reason = True, f"EXIT REVIEW SELL ({confirm_reason})"
+                    else:
+                        print(f"  ⏭️ SELL skipped {pair}: confirmation rejected ({confirm_reason})")
             if should_sell and self.execute_sell(trade_id, pair):
                 executed_sells += 1
                 pnl_dollar = (pnl_pct / 100) * position.get('stake_amount', 0)
@@ -886,15 +893,20 @@ class HermesBrain:
             elif age_hours >= CONFIG['time_stop_hours']:
                 should_sell = True
                 sell_reason = f"TIME STOP {age_hours:.1f}h (limit {CONFIG['time_stop_hours']}h, pnl {pnl_pct:+.2f}%)"
-            elif action == 'sell' and confidence >= 70:
-                confirmed, confirmation_reason = self.engine.confirm_trade_signal(
-                    pair, decision, pair_market, regime.get('primary_regime', 'unknown'), pos
-                )
-                if confirmed:
-                    should_sell = True
-                    sell_reason = f"LLM sell confirmed (conf={confidence:.0f}%)"
+            elif action == 'sell' and confidence >= 80:
+                if age_hours < 1.0:
+                    print(f"  ⏭️ SELL skipped {pair}: trade locked for breathing room (age {age_hours:.2f}h < 1.0h)")
+                elif stop_loss < pnl_pct < 0.25:
+                    print(f"  ⏭️ SELL skipped {pair}: protected in noise zone (pnl {pnl_pct:+.2f}%, sl {stop_loss:.2f}%)")
                 else:
-                    print(f"  ⏭️ SELL skipped {pair}: confirmation rejected ({confirmation_reason})")
+                    confirmed, confirmation_reason = self.engine.confirm_trade_signal(
+                        pair, decision, pair_market, regime.get('primary_regime', 'unknown'), pos
+                    )
+                    if confirmed:
+                        should_sell = True
+                        sell_reason = f"LLM sell confirmed (conf={confidence:.0f}%)"
+                    else:
+                        print(f"  ⏭️ SELL skipped {pair}: confirmation rejected ({confirmation_reason})")
             
             if should_sell:
                 if self.execute_sell(trade_id, pair):
