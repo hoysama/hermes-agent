@@ -134,9 +134,9 @@ def generate_report() -> str:
     rejects = rejection_reasons(log)
 
     provider = "nararouter"
-    analysis_model = "deepseek-v4-flash"
-    analysis_fallback = "agnes-2.5-flash"
-    decision_model = "agnes-2.5-flash"
+    analysis_model = "qwen3.8-27b"
+    analysis_fallback = "mimo-v2.5-free"
+    decision_model = "qwen3.8-27b"
     source_values = [d.get("decision_source") for d in decision_values]
     provider_model = f"{provider} {analysis_model}/{analysis_fallback} analysis -> {decision_model} decisions"
 

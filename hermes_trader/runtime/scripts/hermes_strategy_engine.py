@@ -600,10 +600,10 @@ class StrategyEngine:
         self,
         llm_url: str,
         llm_key: str,
-        model: str = 'agnes-2.5-flash',
-        analysis_model: str = 'deepseek-v4-flash',
-        analysis_fallback: str = 'agnes-2.5-flash',
-        decision_model: str = 'agnes-2.5-flash',
+        model: str = 'qwen3.8-27b',
+        analysis_model: str = 'qwen3.8-27b',
+        analysis_fallback: str = 'mimo-v2.5-free',
+        decision_model: str = 'qwen3.8-27b',
         analysis_models: Optional[List[str]] = None,
         decision_models: Optional[List[str]] = None,
     ):
@@ -616,14 +616,14 @@ class StrategyEngine:
         self.analysis_models = analysis_models or [
             analysis_model,
             analysis_fallback,
-            'agnes-2.0-flash',
-            'minimax-m3-free',
+            'agnes-2.5-flash',
+            'laguna-s-2.1',
         ]
         self.decision_models = decision_models or [
             decision_model,
-            'deepseek-v4-flash',
-            'agnes-2.0-flash',
-            'minimax-m3-free',
+            'mimo-v2.5-free',
+            'agnes-2.5-flash',
+            'laguna-s-2.1',
         ]
 
         self.learning_engine = HermesLearningEngine(llm_url, llm_key, self.decision_models[0])

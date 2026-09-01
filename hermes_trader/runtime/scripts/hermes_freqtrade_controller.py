@@ -79,17 +79,17 @@ NARAROUTER_BASE_URL = os.environ.get('NARAROUTER_BASE_URL', 'https://router.byna
 NARAROUTER_API_KEY = os.environ.get('NARAROUTER_API_KEY', '')
 
 ANALYSIS_MODELS = [
-    'deepseek-v4-flash',    # Primary: 2.7s ultra-fast deep macro analysis
-    'agnes-2.5-flash',      # Fallback 1: precise & economic
-    'agnes-2.0-flash',      # Fallback 2: fast & low cost
-    'minimax-m3-free',      # Fallback 3: free safety net
+    'qwen3.8-27b',          # Primary: 4.39s ultra-fast (49.2 tok/s) macro analysis
+    'mimo-v2.5-free',       # Fallback 1: 3.89s fast & free safety net
+    'agnes-2.5-flash',      # Fallback 2: precise & economic
+    'laguna-s-2.1',         # Fallback 3: stable & $0 cost
 ]
 
 DECISION_MODELS = [
-    'agnes-2.5-flash',      # Primary: 0.3x precise pair decisions & exit reviews
-    'deepseek-v4-flash',    # Fallback 1: deep reasoning fallback
-    'agnes-2.0-flash',      # Fallback 2: fast & low cost
-    'minimax-m3-free',      # Fallback 3: free safety net
+    'qwen3.8-27b',          # Primary: 4.39s ultra-fast precise pair decisions & exit reviews
+    'mimo-v2.5-free',       # Fallback 1: fast & free fallback
+    'agnes-2.5-flash',      # Fallback 2: precise & economic
+    'laguna-s-2.1',         # Fallback 3: stable & $0 cost
 ]
 
 ANALYSIS_MODEL = ANALYSIS_MODELS[0]
