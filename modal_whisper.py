@@ -5,29 +5,22 @@ app = modal.App("hermes-whisper")
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("ffmpeg")
-    .pip_install("faster-whisper", "nvidia-cublas-cu12", "nvidia-cudnn-cu12", "requests", "fastapi[standard]")
+    .pip_install("faster-whisper", "nvidia-cublas-cu12", "nvidia-cudnn-cu12", "requests", "fastapi[standard]", "huggingface_hub")
     .env({
         "LD_LIBRARY_PATH": "/usr/local/lib/python3.11/site-packages/nvidia/cublas/lib:/usr/local/lib/python3.11/site-packages/nvidia/cudnn/lib"
     })
+    .run_commands(
+        "python -c 'from faster_whisper import download_model; download_model(\"large-v3\")'"
+    )
 )
 
+_MODEL = None
 
-@app.function(
-    image=image,
-    gpu="any",
-    timeout=300,
-    scaledown_window=60,
-)
-@modal.fastapi_endpoint(method="POST", requires_proxy_auth=True)
-def transcribe(data: dict):
-    """Transcribe audio from a URL or base64 data using Faster-Whisper on Modal GPU with optional translation."""
-    import base64
-    import tempfile
-    import requests
+
+def _load_cuda_libs():
     import glob
     import ctypes
 
-    # Preload nvidia CUDA shared libraries (cublas, cudnn) for ctranslate2
     for pattern in ["/usr/local/lib/python*/*packages/nvidia/*/lib/*.so*"]:
         for path in sorted(glob.glob(pattern)):
             try:
@@ -35,12 +28,36 @@ def transcribe(data: dict):
             except Exception:
                 pass
 
-    from faster_whisper import WhisperModel
+
+def _get_model(model_name: str = "large-v3"):
+    global _MODEL
+    if _MODEL is None:
+        _load_cuda_libs()
+        from faster_whisper import WhisperModel
+
+        _MODEL = WhisperModel(model_name, device="cuda", compute_type="float16")
+    return _MODEL
+
+
+@app.function(
+    image=image,
+    gpu="any",
+    timeout=300,
+    scaledown_window=120,
+)
+@modal.fastapi_endpoint(method="POST", requires_proxy_auth=True)
+def transcribe(data: dict):
+    """Transcribe audio from a URL or base64 data using Faster-Whisper on Modal GPU with optional translation."""
+    import base64
+    import tempfile
+    import requests
 
     audio_url = data.get("audio_url", "").strip()
     audio_b64 = data.get("audio_b64", "").strip()
     language = data.get("language", None)
     task = data.get("task", "transcribe")  # "transcribe" or "translate"
+    model_name = data.get("model", "large-v3")
+    word_timestamps = data.get("word_timestamps", False)
 
     if not audio_url and not audio_b64:
         return {"status": "error", "message": "audio_url or audio_b64 parameter is required"}
@@ -59,8 +76,7 @@ def transcribe(data: dict):
 
         initial_prompt = data.get("initial_prompt", None)
 
-        # Load Faster-Whisper Model (large-v3 float16 on GPU)
-        model = WhisperModel("large-v3", device="cuda", compute_type="float16")
+        model = _get_model(model_name)
         segments, info = model.transcribe(
             temp_path,
             language=language,
@@ -70,17 +86,24 @@ def transcribe(data: dict):
             condition_on_previous_text=False,
             repetition_penalty=1.1,
             vad_filter=True,  # Voice activity detection filter for clean segments
+            word_timestamps=word_timestamps,
         )
 
         segment_list = []
         full_text = []
         for segment in segments:
             full_text.append(segment.text)
-            segment_list.append({
+            seg_dict = {
                 "start": round(segment.start, 2),
                 "end": round(segment.end, 2),
                 "text": segment.text.strip(),
-            })
+            }
+            if word_timestamps and hasattr(segment, "words") and segment.words:
+                seg_dict["words"] = [
+                    {"word": w.word, "start": round(w.start, 2), "end": round(w.end, 2), "probability": round(w.probability, 2)}
+                    for w in segment.words
+                ]
+            segment_list.append(seg_dict)
 
         final_text = " ".join(full_text).strip()
         print(f"🎙️ [Whisper Transcribe] Language: {info.language} ({info.language_probability:.2f}), Duration: {info.duration:.2f}s | Result: '{final_text}'")

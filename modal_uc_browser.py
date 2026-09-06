@@ -27,7 +27,7 @@ sb_image = (
         "uvicorn",
     )
     .run_commands(
-        "echo 'Cache bust 1 - Update SeleniumBase (2026-08-28)'",
+        "echo 'Cache bust 2 - Update SeleniumBase (2026-09-06)'",
         "wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg",
         "echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main' > /etc/apt/sources.list.d/google-chrome.list",
         "apt-get update && apt-get install -y google-chrome-stable",
@@ -43,6 +43,7 @@ sb_image = (
 async def extract(data: dict):
     """
     Extract content from any URL using SeleniumBase UC Mode (Undetected Driver).
+    Bypasses Cloudflare Turnstile, bot protection, and extracts readable text.
     
     Payload: {"url": "https://example.com"}
     """
@@ -56,18 +57,37 @@ async def extract(data: dict):
     try:
         # Launch SeleniumBase UC Mode (Undetected ChromeDriver)
         driver = Driver(uc=True, headless=True)
-        driver.get(target_url)
-        driver.sleep(3)  # Wait for Cloudflare/JS checks to finish
+        # Use uc_open_with_reconnect for reliable Cloudflare / Turnstile handling
+        driver.uc_open_with_reconnect(target_url, reconnect_time=4)
+        
+        # Attempt to handle any visible captcha checkboxes if present
+        try:
+            driver.uc_gui_click_captcha()
+        except Exception:
+            pass
+        
+        driver.sleep(2)
         
         title = driver.get_title()
         page_source = driver.get_page_source()
+        
+        # Extract clean text from the body
+        try:
+            body_text = driver.get_text("body")
+        except Exception:
+            body_text = page_source[:5000]
+        
+        # Provide both readable content and snippet for Hermes tools
+        snippet = body_text[:15000].strip() if body_text else page_source[:1000]
         
         return {
             "status": "success",
             "url": target_url,
             "title": title,
-            "length": len(page_source),
-            "snippet": page_source[:1000]
+            "length": len(body_text or page_source),
+            "text": body_text,
+            "snippet": snippet,
+            "html_length": len(page_source),
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}, 500
