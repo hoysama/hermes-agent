@@ -2,6 +2,8 @@ import modal
 
 app = modal.App("hermes-whisper")
 
+DEFAULT_MODEL = "deepdml/faster-whisper-large-v3-turbo-ct2"
+
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("ffmpeg")
@@ -10,7 +12,8 @@ image = (
         "LD_LIBRARY_PATH": "/usr/local/lib/python3.11/site-packages/nvidia/cublas/lib:/usr/local/lib/python3.11/site-packages/nvidia/cudnn/lib"
     })
     .run_commands(
-        "python -c 'from faster_whisper import download_model; download_model(\"large-v3\")'"
+        "echo 'Cache bust Turbo - Preload Whisper Large-v3-Turbo (2026-09-06)'",
+        "python -c 'from faster_whisper import download_model; download_model(\"deepdml/faster-whisper-large-v3-turbo-ct2\")'"
     )
 )
 
@@ -29,7 +32,7 @@ def _load_cuda_libs():
                 pass
 
 
-def _get_model(model_name: str = "large-v3"):
+def _get_model(model_name: str = DEFAULT_MODEL):
     global _MODEL
     if _MODEL is None:
         _load_cuda_libs()
@@ -47,7 +50,7 @@ def _get_model(model_name: str = "large-v3"):
 )
 @modal.fastapi_endpoint(method="POST", requires_proxy_auth=True)
 def transcribe(data: dict):
-    """Transcribe audio from a URL or base64 data using Faster-Whisper on Modal GPU with optional translation."""
+    """Transcribe audio from a URL or base64 data using Faster-Whisper Large-v3-Turbo on Modal GPU."""
     import base64
     import tempfile
     import requests
@@ -56,7 +59,8 @@ def transcribe(data: dict):
     audio_b64 = data.get("audio_b64", "").strip()
     language = data.get("language", None)
     task = data.get("task", "transcribe")  # "transcribe" or "translate"
-    model_name = data.get("model", "large-v3")
+    req_model = data.get("model", "")
+    model_name = DEFAULT_MODEL if not req_model or req_model in ("turbo", "large-v3-turbo", "large-v3") else req_model
     word_timestamps = data.get("word_timestamps", False)
 
     if not audio_url and not audio_b64:
