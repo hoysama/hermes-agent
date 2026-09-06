@@ -536,28 +536,42 @@ class HermesBrain:
             # Dynamic volatility-adaptive levels per pair
             atr_pct = float(indicators.get('atr_pct', 1.5) or 1.5)
             dynamic_sl = -max(1.2, min(3.5, round(atr_pct * 1.2, 2)))
-            dynamic_tp = max(2.5, min(8.0, round(atr_pct * 2.5, 2)))
-            dynamic_be_trigger = max(1.0, round(atr_pct * 1.0, 2))
-            
-            # Dynamic Time Decay based on strategy category
+
             strat_name = str(decision.get('strategy_id', '')).lower()
-            if any(k in strat_name for k in ('scalp', 'dip', 'breakout')):
+            # Fast Scalp TP: Scalp & Dip strategies target fast 1.1% - 2.2% profits; Trend targets 1.6% - 4.5%
+            if any(k in strat_name for k in ('scalp', 'dip', 'range')):
+                dynamic_tp = max(1.1, min(2.5, round(atr_pct * 0.9, 2)))
+            else:
+                dynamic_tp = max(1.6, min(5.0, round(atr_pct * 1.5, 2)))
+
+            # Early Breakeven: triggers once peak >= 0.60%, locks at fee floor + 0.05% (e.g. 0.35%)
+            dynamic_be_trigger = max(0.60, round(atr_pct * 0.45, 2))
+            fee_breakeven = float(indicators.get('fee_breakeven_pct', CONFIG.get('breakeven_lock_pct', 0.30)))
+            fee_floor_lock = round(fee_breakeven + 0.05, 2)
+
+            # Tight Trailing Drop once in solid profit (>= 1.0% peak)
+            trailing_drop = max(0.40, round(atr_pct * 0.35, 2))
+
+            # Dynamic Time Decay:
+            # If trade is in green (> fee_breakeven), extend limit to 5.0h to let it hit TP
+            # Stagnant trades (< +0.15% at 1.5h) get released below to free capital
+            if pnl_pct > fee_breakeven:
+                dynamic_time_limit = 5.0
+            elif any(k in strat_name for k in ('scalp', 'dip', 'breakout', 'range')):
                 dynamic_time_limit = 3.0
             else:
-                dynamic_time_limit = 6.0 if pnl_pct > -0.5 else 3.5
-            
-            trailing_drop = max(1.2, round(atr_pct * 0.8, 2))
-
-            fee_breakeven = float(indicators.get('fee_breakeven_pct', CONFIG.get('breakeven_lock_pct', 0.30)))
+                dynamic_time_limit = 4.5
 
             if pnl_pct >= dynamic_tp:
-                should_sell, reason = True, f"DYNAMIC TAKE PROFIT {pnl_pct:.1f}% (target {dynamic_tp:.1f}%)"
+                should_sell, reason = True, f"DYNAMIC TAKE PROFIT {pnl_pct:.2f}% (target {dynamic_tp:.2f}%)"
             elif pnl_pct <= dynamic_sl:
-                should_sell, reason = True, f"DYNAMIC ATR STOP LOSS {pnl_pct:.1f}% (limit {dynamic_sl:.1f}%)"
-            elif peak_pnl >= 1.5 and (peak_pnl - pnl_pct) >= trailing_drop:
-                should_sell, reason = True, f"DYNAMIC ATR TRAILING STOP (peak {peak_pnl:.1f}% → now {pnl_pct:.1f}%, drop >= {trailing_drop:.1f}%)"
-            elif peak_pnl >= dynamic_be_trigger and pnl_pct <= fee_breakeven:
-                should_sell, reason = True, f"DYNAMIC FEE BREAKEVEN LOCK (peak {peak_pnl:.1f}% → now {pnl_pct:.1f}%, fee_floor {fee_breakeven:.2f}%)"
+                should_sell, reason = True, f"DYNAMIC ATR STOP LOSS {pnl_pct:.2f}% (limit {dynamic_sl:.2f}%)"
+            elif peak_pnl >= 1.0 and (peak_pnl - pnl_pct) >= trailing_drop:
+                should_sell, reason = True, f"DYNAMIC ATR TRAILING STOP (peak {peak_pnl:.2f}% → now {pnl_pct:.2f}%, drop >= {trailing_drop:.2f}%)"
+            elif peak_pnl >= dynamic_be_trigger and pnl_pct <= fee_floor_lock:
+                should_sell, reason = True, f"DYNAMIC FEE BREAKEVEN LOCK (peak {peak_pnl:.2f}% → now {pnl_pct:.2f}%, floor {fee_floor_lock:.2f}%)"
+            elif age_hours >= 1.5 and pnl_pct < 0.15 and len(positions) >= 2:
+                should_sell, reason = True, f"STAGNANT TRADE RELEASE {age_hours:.1f}h (stale at {pnl_pct:+.2f}%, freeing capital)"
             elif age_hours >= dynamic_time_limit:
                 should_sell, reason = True, f"DYNAMIC TIME STOP {age_hours:.1f}h (limit {dynamic_time_limit:.1f}h, pnl {pnl_pct:+.2f}%)"
             elif pnl_pct < -4.0 and self.check_news_disaster(pair):
@@ -781,6 +795,13 @@ class HermesBrain:
                     break
                 threshold = self.engine.get_confidence_threshold(strategy_id, regime=primary_regime)
                 if confidence >= threshold:
+                    # Seller volume dominance filter: don't buy if sellers heavily control order flow
+                    pair_indicators = market_data.get(pair, {}).get('indicators', {})
+                    buy_vol = pair_indicators.get('buy_vol_ratio')
+                    if buy_vol is not None and buy_vol < 45.0:
+                        print(f"  ⏭️ BUY skipped {pair}: seller dominated volume flow ({buy_vol:.1f}% buy vol)")
+                        continue
+
                     loss_ok, loss_reason = self.engine.loss_guard(strategy_id, pair, current_regime=primary_regime)
                     if not loss_ok:
                         print(f"  ⏭️ BUY skipped {pair}: {loss_reason}")
