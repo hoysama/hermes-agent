@@ -22,14 +22,21 @@ Usage:
 
 import argparse
 import base64
+from datetime import datetime, timedelta, timezone
+import email
+from email.header import decode_header
+from email.mime.application import MIMEApplication
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+import imaplib
 import json
+import mimetypes
 import os
+from pathlib import Path
 import shutil
+import smtplib
 import subprocess
 import sys
-from datetime import datetime, timedelta, timezone
-from email.mime.text import MIMEText
-from pathlib import Path
 
 # Ensure sibling modules (_hermes_home) are importable when run standalone.
 _SCRIPTS_DIR = str(Path(__file__).resolve().parent)
@@ -41,6 +48,7 @@ from _hermes_home import get_hermes_home
 HERMES_HOME = get_hermes_home()
 TOKEN_PATH = HERMES_HOME / "google_token.json"
 CLIENT_SECRET_PATH = HERMES_HOME / "google_client_secret.json"
+APP_PASSWORD_PATH = HERMES_HOME / "gmail_app_password.json"
 
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
@@ -61,8 +69,54 @@ def _normalize_authorized_user_payload(payload: dict) -> dict:
     return normalized
 
 
-def _ensure_authenticated():
+def _get_app_password_config() -> dict | None:
+    """Find and load gmail_app_password.json from standard locations."""
+    candidates = [
+        APP_PASSWORD_PATH,
+        HERMES_HOME / "gmail_app_password.json",
+        Path.home() / ".hermes" / "gmail_app_password.json",
+        Path.home() / ".hermes" / "profiles" / "jobhunter" / "gmail_app_password.json",
+    ]
+    for p in candidates:
+        if p.exists():
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+                if data.get("email") and data.get("app_password"):
+                    return data
+            except Exception:
+                pass
+    return None
+
+
+def _is_oauth_valid() -> bool:
+    """Check if OAuth token exists and is valid (or refreshable)."""
     if not TOKEN_PATH.exists():
+        return False
+    try:
+        from google.auth.transport.requests import Request
+        from google.oauth2.credentials import Credentials
+
+        creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), _stored_token_scopes())
+        if creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+            TOKEN_PATH.write_text(
+                json.dumps(
+                    _normalize_authorized_user_payload(json.loads(creds.to_json())),
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        return bool(creds.valid)
+    except Exception:
+        return False
+
+
+def _ensure_authenticated(service: str = "all"):
+    if service == "gmail" and _get_app_password_config():
+        return
+    if not TOKEN_PATH.exists():
+        if service in ("all", "gmail") and _get_app_password_config():
+            return
         print("Not authenticated. Run the setup script first:", file=sys.stderr)
         print(f"  python {Path(__file__).parent / 'setup.py'}", file=sys.stderr)
         sys.exit(1)
@@ -180,23 +234,30 @@ def _datetime_with_timezone(value: str) -> str:
 
 def get_credentials():
     """Load and refresh credentials from token file."""
-    _ensure_authenticated()
+    _ensure_authenticated("google_workspace")
 
-    from google.oauth2.credentials import Credentials
     from google.auth.transport.requests import Request
+    from google.oauth2.credentials import Credentials
 
     creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), _stored_token_scopes())
     if creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-        TOKEN_PATH.write_text(
-            json.dumps(
-                _normalize_authorized_user_payload(json.loads(creds.to_json())),
-                indent=2,
-            ), encoding="utf-8"
-        )
+        try:
+            creds.refresh(Request())
+            TOKEN_PATH.write_text(
+                json.dumps(
+                    _normalize_authorized_user_payload(json.loads(creds.to_json())),
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            print(f"[google_api] OAuth token refresh failed: {exc}", file=sys.stderr)
     if not creds.valid:
-        print("Token is invalid. Re-run setup.", file=sys.stderr)
-        sys.exit(1)
+        if _get_app_password_config():
+            print("[google_api] OAuth token is expired/invalid, but gmail_app_password.json is configured.", file=sys.stderr)
+        else:
+            print("Token is invalid. Re-run setup.", file=sys.stderr)
+            sys.exit(1)
     return creds
 
 
@@ -211,76 +272,398 @@ def build_service(api, version):
 # =========================================================================
 
 
+def _decode_mime_words(s: str | None) -> str:
+    if not s:
+        return ""
+    decoded = []
+    for text, enc in decode_header(s):
+        if isinstance(text, bytes):
+            decoded.append(text.decode(enc or "utf-8", errors="replace"))
+        else:
+            decoded.append(str(text))
+    return "".join(decoded)
+
+
+def _send_via_smtp(args_or_dict, app_cfg: dict) -> dict:
+    email_addr = app_cfg["email"]
+    app_pwd = app_cfg["app_password"]
+    smtp_host = app_cfg.get("smtp_host", "smtp.gmail.com")
+    smtp_port = int(app_cfg.get("smtp_port", 587))
+
+    if hasattr(args_or_dict, "to"):
+        to_addr = args_or_dict.to
+        subject = args_or_dict.subject
+        body = args_or_dict.body
+        cc_addr = getattr(args_or_dict, "cc", "")
+        from_hdr = getattr(args_or_dict, "from_header", "")
+        is_html = getattr(args_or_dict, "html", False)
+        attachments = (getattr(args_or_dict, "attachment", []) or []) + (getattr(args_or_dict, "attachments", []) or [])
+        in_reply_to = getattr(args_or_dict, "in_reply_to", "")
+        references = getattr(args_or_dict, "references", "")
+    else:
+        to_addr = args_or_dict.get("to")
+        subject = args_or_dict.get("subject", "")
+        body = args_or_dict.get("body", "")
+        cc_addr = args_or_dict.get("cc", "")
+        from_hdr = args_or_dict.get("from_header", "")
+        is_html = args_or_dict.get("html", False)
+        attachments = (args_or_dict.get("attachment", []) or []) + (args_or_dict.get("attachments", []) or [])
+        in_reply_to = args_or_dict.get("in_reply_to", "")
+        references = args_or_dict.get("references", "")
+
+    if attachments:
+        msg = MIMEMultipart()
+        msg.attach(MIMEText(body, "html" if is_html else "plain", "utf-8"))
+        for att in attachments:
+            att_path = Path(att)
+            if not att_path.exists():
+                print(f"Warning: Attachment {att} not found, skipping.", file=sys.stderr)
+                continue
+            with open(att_path, "rb") as f:
+                content = f.read()
+            mime_type, _ = mimetypes.guess_type(str(att_path))
+            if mime_type and "/" in mime_type:
+                subtype = mime_type.split("/", 1)[1]
+            elif att_path.suffix == ".pdf":
+                subtype = "pdf"
+            else:
+                subtype = "octet-stream"
+            part = MIMEApplication(content, _subtype=subtype)
+            part.add_header("Content-Disposition", "attachment", filename=att_path.name)
+            msg.attach(part)
+    else:
+        msg = MIMEText(body, "html" if is_html else "plain", "utf-8")
+
+    msg["From"] = from_hdr or email_addr
+    msg["To"] = to_addr
+    msg["Subject"] = subject
+    if cc_addr:
+        msg["Cc"] = cc_addr
+    if in_reply_to:
+        msg["In-Reply-To"] = in_reply_to
+    if references:
+        msg["References"] = references
+
+    recipients = [addr.strip() for addr in to_addr.split(",") if addr.strip()]
+    if cc_addr:
+        recipients.extend([addr.strip() for addr in cc_addr.split(",") if addr.strip()])
+
+    with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as server:
+        server.starttls()
+        server.login(email_addr, app_pwd)
+        server.sendmail(from_hdr or email_addr, recipients, msg.as_string())
+
+    return {
+        "status": "sent",
+        "backend": "smtp_fallback",
+        "sender": email_addr,
+        "to": to_addr,
+        "subject": subject,
+    }
+
+
+def _search_via_imap(args, app_cfg: dict) -> list[dict]:
+    email_addr = app_cfg["email"]
+    app_pwd = app_cfg["app_password"]
+    imap_host = app_cfg.get("imap_host", "imap.gmail.com")
+    imap_port = int(app_cfg.get("imap_port", 993))
+
+    with imaplib.IMAP4_SSL(imap_host, imap_port, timeout=30) as mail:
+        mail.login(email_addr, app_pwd)
+        mail.select("INBOX", readonly=True)
+
+        q = (getattr(args, "query", "") or "").strip()
+        criteria = "ALL"
+        if "is:unread" in q.lower() or "label:unread" in q.lower():
+            criteria = "UNSEEN"
+        elif q.lower().startswith("from:"):
+            sender = q[5:].strip().strip('"').strip("'")
+            criteria = f'(FROM "{sender}")'
+        elif q.lower().startswith("to:"):
+            recipient = q[3:].strip().strip('"').strip("'")
+            criteria = f'(TO "{recipient}")'
+        elif q.lower().startswith("subject:"):
+            subj = q[8:].strip().strip('"').strip("'")
+            criteria = f'(SUBJECT "{subj}")'
+
+        status, msg_nums = mail.search(None, criteria)
+        if status != "OK" or not msg_nums or not msg_nums[0]:
+            status, msg_nums = mail.search(None, "ALL")
+
+        if status != "OK" or not msg_nums or not msg_nums[0]:
+            return []
+
+        nums = msg_nums[0].split()
+        max_results = getattr(args, "max", 10)
+        nums = nums[-max_results:]
+        nums.reverse()
+
+        output = []
+        for num in nums:
+            res, data = mail.fetch(num, "(RFC822.HEADER)")
+            if res != "OK" or not data or not data[0]:
+                continue
+            raw_email = data[0][1]
+            parsed = email.message_from_bytes(raw_email)
+            subject = _decode_mime_words(parsed.get("Subject", ""))
+            from_hdr = _decode_mime_words(parsed.get("From", ""))
+            to_hdr = _decode_mime_words(parsed.get("To", ""))
+            date_hdr = parsed.get("Date", "")
+
+            output.append({
+                "id": num.decode("utf-8", errors="replace"),
+                "threadId": "",
+                "from": from_hdr,
+                "to": to_hdr,
+                "subject": subject,
+                "date": date_hdr,
+                "snippet": subject,
+                "labels": ["INBOX"],
+                "backend": "imap_fallback",
+            })
+        return output
+
+
+def _get_via_imap(args, app_cfg: dict) -> dict:
+    email_addr = app_cfg["email"]
+    app_pwd = app_cfg["app_password"]
+    imap_host = app_cfg.get("imap_host", "imap.gmail.com")
+    imap_port = int(app_cfg.get("imap_port", 993))
+
+    msg_id = getattr(args, "message_id", str(args))
+
+    with imaplib.IMAP4_SSL(imap_host, imap_port, timeout=30) as mail:
+        mail.login(email_addr, app_pwd)
+        mail.select("INBOX", readonly=True)
+
+        res, data = mail.fetch(msg_id, "(RFC822)")
+        if res != "OK" or not data or not data[0]:
+            status, nums = mail.search(None, f'HEADER Message-ID "{msg_id}"')
+            if status == "OK" and nums and nums[0]:
+                res, data = mail.fetch(nums[0].split()[-1], "(RFC822)")
+
+        if res != "OK" or not data or not data[0]:
+            return {"error": f"Message {msg_id} not found via IMAP"}
+
+        raw_email = data[0][1]
+        parsed = email.message_from_bytes(raw_email)
+
+        body = ""
+        if parsed.is_multipart():
+            for part in parsed.walk():
+                ctype = part.get_content_type()
+                cdispo = str(part.get("Content-Disposition"))
+                if ctype == "text/plain" and "attachment" not in cdispo:
+                    body = part.get_payload(decode=True).decode("utf-8", errors="replace")
+                    break
+            if not body:
+                for part in parsed.walk():
+                    ctype = part.get_content_type()
+                    cdispo = str(part.get("Content-Disposition"))
+                    if ctype == "text/html" and "attachment" not in cdispo:
+                        body = part.get_payload(decode=True).decode("utf-8", errors="replace")
+                        break
+        else:
+            body = parsed.get_payload(decode=True).decode("utf-8", errors="replace")
+
+        return {
+            "id": msg_id,
+            "threadId": "",
+            "from": _decode_mime_words(parsed.get("From", "")),
+            "to": _decode_mime_words(parsed.get("To", "")),
+            "subject": _decode_mime_words(parsed.get("Subject", "")),
+            "date": parsed.get("Date", ""),
+            "labels": ["INBOX"],
+            "body": body,
+            "backend": "imap_fallback",
+        }
+
+
+def send_email_with_attachments(
+    to: str,
+    subject: str,
+    body: str,
+    attachments: list[str | Path] | None = None,
+    cc: str = "",
+    from_header: str = "",
+    html: bool = False,
+    thread_id: str = "",
+) -> dict:
+    """Send an email with optional attachments, trying Gmail API first, falling back to SMTP App Password."""
+    class Args:
+        pass
+
+    a = Args()
+    a.to = to
+    a.subject = subject
+    a.body = body
+    a.attachment = [str(x) for x in (attachments or [])]
+    a.attachments = []
+    a.cc = cc
+    a.from_header = from_header
+    a.html = html
+    a.thread_id = thread_id
+
+    app_cfg = _get_app_password_config()
+    oauth_ok = _is_oauth_valid()
+
+    if not oauth_ok and app_cfg:
+        return _send_via_smtp(a, app_cfg)
+
+    try:
+        service = build_service("gmail", "v1")
+        all_att = [str(x) for x in (attachments or [])]
+        msg = MIMEMultipart() if all_att else MIMEText(body, "html" if html else "plain", "utf-8")
+        if all_att:
+            msg.attach(MIMEText(body, "html" if html else "plain", "utf-8"))
+            for att in all_att:
+                att_path = Path(att)
+                if not att_path.exists():
+                    continue
+                with open(att_path, "rb") as f:
+                    part = MIMEApplication(f.read(), _subtype="pdf" if att_path.suffix == ".pdf" else "octet-stream")
+                part.add_header("Content-Disposition", "attachment", filename=att_path.name)
+                msg.attach(part)
+        msg["To"] = to
+        msg["Subject"] = subject
+        if cc:
+            msg["Cc"] = cc
+        if from_header:
+            msg["From"] = from_header
+
+        raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+        b = {"raw": raw}
+        if thread_id:
+            b["threadId"] = thread_id
+
+        res = service.users().messages().send(userId="me", body=b).execute()
+        return {"status": "sent", "id": res["id"], "threadId": res.get("threadId", ""), "backend": "gmail_api"}
+    except Exception as exc:
+        if app_cfg:
+            print(f"[google_api] Gmail API failed ({exc}), falling back to SMTP App Password...", file=sys.stderr)
+            return _send_via_smtp(a, app_cfg)
+        raise
+
+
 def gmail_search(args):
-    if _gws_binary():
-        results = _run_gws(
-            ["gmail", "users", "messages", "list"],
-            params={"userId": "me", "q": args.query, "maxResults": args.max},
-        )
+    app_cfg = _get_app_password_config()
+    oauth_ok = _is_oauth_valid()
+
+    if not oauth_ok and app_cfg:
+        results = _search_via_imap(args, app_cfg)
+        if not results:
+            print("No messages found.")
+        else:
+            print(json.dumps(results, indent=2, ensure_ascii=False))
+        return
+
+    try:
+        if _gws_binary():
+            results = _run_gws(
+                ["gmail", "users", "messages", "list"],
+                params={"userId": "me", "q": args.query, "maxResults": args.max},
+            )
+            messages = results.get("messages", [])
+            output = []
+            for msg_meta in messages:
+                msg = _run_gws(
+                    ["gmail", "users", "messages", "get"],
+                    params={
+                        "userId": "me",
+                        "id": msg_meta["id"],
+                        "format": "metadata",
+                        "metadataHeaders": ["From", "To", "Subject", "Date"],
+                    },
+                )
+                headers = _headers_dict(msg)
+                output.append(
+                    {
+                        "id": msg["id"],
+                        "threadId": msg["threadId"],
+                        "from": headers.get("from", ""),
+                        "to": headers.get("to", ""),
+                        "subject": headers.get("subject", ""),
+                        "date": headers.get("date", ""),
+                        "snippet": msg.get("snippet", ""),
+                        "labels": msg.get("labelIds", []),
+                    }
+                )
+            print(json.dumps(output, indent=2, ensure_ascii=False))
+            return
+
+        service = build_service("gmail", "v1")
+        results = service.users().messages().list(
+            userId="me", q=args.query, maxResults=args.max
+        ).execute()
         messages = results.get("messages", [])
+        if not messages:
+            print("No messages found.")
+            return
+
         output = []
         for msg_meta in messages:
-            msg = _run_gws(
-                ["gmail", "users", "messages", "get"],
-                params={
-                    "userId": "me",
-                    "id": msg_meta["id"],
-                    "format": "metadata",
-                    "metadataHeaders": ["From", "To", "Subject", "Date"],
-                },
-            )
+            msg = service.users().messages().get(
+                userId="me", id=msg_meta["id"], format="metadata",
+                metadataHeaders=["From", "To", "Subject", "Date"],
+            ).execute()
             headers = _headers_dict(msg)
-            output.append(
-                {
-                    "id": msg["id"],
-                    "threadId": msg["threadId"],
-                    "from": headers.get("from", ""),
-                    "to": headers.get("to", ""),
-                    "subject": headers.get("subject", ""),
-                    "date": headers.get("date", ""),
-                    "snippet": msg.get("snippet", ""),
-                    "labels": msg.get("labelIds", []),
-                }
-            )
+            output.append({
+                "id": msg["id"],
+                "threadId": msg["threadId"],
+                "from": headers.get("from", ""),
+                "to": headers.get("to", ""),
+                "subject": headers.get("subject", ""),
+                "date": headers.get("date", ""),
+                "snippet": msg.get("snippet", ""),
+                "labels": msg.get("labelIds", []),
+            })
         print(json.dumps(output, indent=2, ensure_ascii=False))
-        return
-
-    service = build_service("gmail", "v1")
-    results = service.users().messages().list(
-        userId="me", q=args.query, maxResults=args.max
-    ).execute()
-    messages = results.get("messages", [])
-    if not messages:
-        print("No messages found.")
-        return
-
-    output = []
-    for msg_meta in messages:
-        msg = service.users().messages().get(
-            userId="me", id=msg_meta["id"], format="metadata",
-            metadataHeaders=["From", "To", "Subject", "Date"],
-        ).execute()
-        headers = _headers_dict(msg)
-        output.append({
-            "id": msg["id"],
-            "threadId": msg["threadId"],
-            "from": headers.get("from", ""),
-            "to": headers.get("to", ""),
-            "subject": headers.get("subject", ""),
-            "date": headers.get("date", ""),
-            "snippet": msg.get("snippet", ""),
-            "labels": msg.get("labelIds", []),
-        })
-    print(json.dumps(output, indent=2, ensure_ascii=False))
-
+    except Exception as exc:
+        if app_cfg:
+            print(f"[google_api] OAuth search failed ({exc}), falling back to IMAP App Password...", file=sys.stderr)
+            results = _search_via_imap(args, app_cfg)
+            if not results:
+                print("No messages found.")
+            else:
+                print(json.dumps(results, indent=2, ensure_ascii=False))
+            return
+        raise
 
 
 def gmail_get(args):
-    if _gws_binary():
-        msg = _run_gws(
-            ["gmail", "users", "messages", "get"],
-            params={"userId": "me", "id": args.message_id, "format": "full"},
-        )
+    app_cfg = _get_app_password_config()
+    oauth_ok = _is_oauth_valid()
+
+    if not oauth_ok and app_cfg:
+        res = _get_via_imap(args, app_cfg)
+        print(json.dumps(res, indent=2, ensure_ascii=False))
+        return
+
+    try:
+        if _gws_binary():
+            msg = _run_gws(
+                ["gmail", "users", "messages", "get"],
+                params={"userId": "me", "id": args.message_id, "format": "full"},
+            )
+            headers = _headers_dict(msg)
+            result = {
+                "id": msg["id"],
+                "threadId": msg["threadId"],
+                "from": headers.get("from", ""),
+                "to": headers.get("to", ""),
+                "subject": headers.get("subject", ""),
+                "date": headers.get("date", ""),
+                "labels": msg.get("labelIds", []),
+                "body": _extract_message_body(msg),
+            }
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            return
+
+        service = build_service("gmail", "v1")
+        msg = service.users().messages().get(
+            userId="me", id=args.message_id, format="full"
+        ).execute()
+
         headers = _headers_dict(msg)
         result = {
             "id": msg["id"],
@@ -293,82 +676,172 @@ def gmail_get(args):
             "body": _extract_message_body(msg),
         }
         print(json.dumps(result, indent=2, ensure_ascii=False))
-        return
-
-    service = build_service("gmail", "v1")
-    msg = service.users().messages().get(
-        userId="me", id=args.message_id, format="full"
-    ).execute()
-
-    headers = _headers_dict(msg)
-    result = {
-        "id": msg["id"],
-        "threadId": msg["threadId"],
-        "from": headers.get("from", ""),
-        "to": headers.get("to", ""),
-        "subject": headers.get("subject", ""),
-        "date": headers.get("date", ""),
-        "labels": msg.get("labelIds", []),
-        "body": _extract_message_body(msg),
-    }
-    print(json.dumps(result, indent=2, ensure_ascii=False))
-
+    except Exception as exc:
+        if app_cfg:
+            print(f"[google_api] OAuth get failed ({exc}), falling back to IMAP App Password...", file=sys.stderr)
+            res = _get_via_imap(args, app_cfg)
+            print(json.dumps(res, indent=2, ensure_ascii=False))
+            return
+        raise
 
 
 def gmail_send(args):
-    if _gws_binary():
-        message = MIMEText(args.body, "html" if args.html else "plain")
-        message["To"] = args.to
-        message["Subject"] = args.subject
-        if args.cc:
-            message["Cc"] = args.cc
-        if args.from_header:
-            message["From"] = args.from_header
+    app_cfg = _get_app_password_config()
+    attachments = (getattr(args, "attachment", []) or []) + (getattr(args, "attachments", []) or [])
 
-        raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+    oauth_ok = _is_oauth_valid()
+    if not oauth_ok and app_cfg:
+        try:
+            res = _send_via_smtp(args, app_cfg)
+            print(json.dumps(res, indent=2, ensure_ascii=False))
+            return
+        except Exception as e:
+            print(f"Error sending via SMTP fallback: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    try:
+        if _gws_binary():
+            msg = MIMEMultipart() if attachments else MIMEText(args.body, "html" if args.html else "plain", "utf-8")
+            if attachments:
+                msg.attach(MIMEText(args.body, "html" if args.html else "plain", "utf-8"))
+                for att in attachments:
+                    att_path = Path(att)
+                    if not att_path.exists():
+                        continue
+                    with open(att_path, "rb") as f:
+                        part = MIMEApplication(f.read(), _subtype="pdf" if att_path.suffix == ".pdf" else "octet-stream")
+                    part.add_header("Content-Disposition", "attachment", filename=att_path.name)
+                    msg.attach(part)
+            msg["To"] = args.to
+            msg["Subject"] = args.subject
+            if args.cc:
+                msg["Cc"] = args.cc
+            if args.from_header:
+                msg["From"] = args.from_header
+
+            raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+            body = {"raw": raw}
+            if args.thread_id:
+                body["threadId"] = args.thread_id
+
+            result = _run_gws(
+                ["gmail", "users", "messages", "send"],
+                params={"userId": "me"},
+                body=body,
+            )
+            print(json.dumps({"status": "sent", "id": result["id"], "threadId": result.get("threadId", "")}, indent=2))
+            return
+
+        service = build_service("gmail", "v1")
+        msg = MIMEMultipart() if attachments else MIMEText(args.body, "html" if args.html else "plain", "utf-8")
+        if attachments:
+            msg.attach(MIMEText(args.body, "html" if args.html else "plain", "utf-8"))
+            for att in attachments:
+                att_path = Path(att)
+                if not att_path.exists():
+                    continue
+                with open(att_path, "rb") as f:
+                    part = MIMEApplication(f.read(), _subtype="pdf" if att_path.suffix == ".pdf" else "octet-stream")
+                part.add_header("Content-Disposition", "attachment", filename=att_path.name)
+                msg.attach(part)
+        msg["To"] = args.to
+        msg["Subject"] = args.subject
+        if args.cc:
+            msg["Cc"] = args.cc
+        if args.from_header:
+            msg["From"] = args.from_header
+
+        raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
         body = {"raw": raw}
         if args.thread_id:
             body["threadId"] = args.thread_id
 
-        result = _run_gws(
-            ["gmail", "users", "messages", "send"],
-            params={"userId": "me"},
-            body=body,
-        )
+        result = service.users().messages().send(userId="me", body=body).execute()
         print(json.dumps({"status": "sent", "id": result["id"], "threadId": result.get("threadId", "")}, indent=2))
-        return
-
-    service = build_service("gmail", "v1")
-    message = MIMEText(args.body, "html" if args.html else "plain")
-    message["To"] = args.to
-    message["Subject"] = args.subject
-    if args.cc:
-        message["Cc"] = args.cc
-    if args.from_header:
-        message["From"] = args.from_header
-
-    raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
-    body = {"raw": raw}
-
-    if args.thread_id:
-        body["threadId"] = args.thread_id
-
-    result = service.users().messages().send(userId="me", body=body).execute()
-    print(json.dumps({"status": "sent", "id": result["id"], "threadId": result.get("threadId", "")}, indent=2))
-
+    except Exception as exc:
+        if app_cfg:
+            print(f"[google_api] OAuth send failed ({exc}), falling back to SMTP App Password...", file=sys.stderr)
+            try:
+                res = _send_via_smtp(args, app_cfg)
+                print(json.dumps(res, indent=2, ensure_ascii=False))
+                return
+            except Exception as smtp_err:
+                print(f"Error sending via SMTP fallback after OAuth failure: {smtp_err}", file=sys.stderr)
+                sys.exit(1)
+        raise
 
 
 def gmail_reply(args):
-    if _gws_binary():
-        original = _run_gws(
-            ["gmail", "users", "messages", "get"],
-            params={
-                "userId": "me",
-                "id": args.message_id,
-                "format": "metadata",
-                "metadataHeaders": ["From", "Subject", "Message-ID"],
-            },
-        )
+    app_cfg = _get_app_password_config()
+    oauth_ok = _is_oauth_valid()
+
+    if not oauth_ok and app_cfg:
+        try:
+            orig = _get_via_imap(args, app_cfg)
+            to_addr = orig.get("from", "")
+            subject = orig.get("subject", "")
+            if not subject.startswith("Re:"):
+                subject = f"Re: {subject}" if subject else "Re:"
+
+            class ReplyArgs:
+                to = to_addr
+                subject = subject
+                body = args.body
+                cc = ""
+                from_header = getattr(args, "from_header", "")
+                html = False
+                attachment = []
+                attachments = []
+                in_reply_to = args.message_id
+                references = args.message_id
+
+            res = _send_via_smtp(ReplyArgs(), app_cfg)
+            print(json.dumps(res, indent=2, ensure_ascii=False))
+            return
+        except Exception as e:
+            print(f"Error replying via SMTP fallback: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    try:
+        if _gws_binary():
+            original = _run_gws(
+                ["gmail", "users", "messages", "get"],
+                params={
+                    "userId": "me",
+                    "id": args.message_id,
+                    "format": "metadata",
+                    "metadataHeaders": ["From", "Subject", "Message-ID"],
+                },
+            )
+            headers = _headers_dict(original)
+
+            subject = headers.get("subject", "")
+            if not subject.startswith("Re:"):
+                subject = f"Re: {subject}"
+
+            message = MIMEText(args.body)
+            message["To"] = headers.get("from", "")
+            message["Subject"] = subject
+            if args.from_header:
+                message["From"] = args.from_header
+            if headers.get("message-id"):
+                message["In-Reply-To"] = headers["message-id"]
+                message["References"] = headers["message-id"]
+
+            raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+            result = _run_gws(
+                ["gmail", "users", "messages", "send"],
+                params={"userId": "me"},
+                body={"raw": raw, "threadId": original["threadId"]},
+            )
+            print(json.dumps({"status": "sent", "id": result["id"], "threadId": result.get("threadId", "")}, indent=2))
+            return
+
+        service = build_service("gmail", "v1")
+        original = service.users().messages().get(
+            userId="me", id=args.message_id, format="metadata",
+            metadataHeaders=["From", "Subject", "Message-ID"],
+        ).execute()
         headers = _headers_dict(original)
 
         subject = headers.get("subject", "")
@@ -385,39 +858,39 @@ def gmail_reply(args):
             message["References"] = headers["message-id"]
 
         raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
-        result = _run_gws(
-            ["gmail", "users", "messages", "send"],
-            params={"userId": "me"},
-            body={"raw": raw, "threadId": original["threadId"]},
-        )
+        body = {"raw": raw, "threadId": original["threadId"]}
+
+        result = service.users().messages().send(userId="me", body=body).execute()
         print(json.dumps({"status": "sent", "id": result["id"], "threadId": result.get("threadId", "")}, indent=2))
-        return
+    except Exception as exc:
+        if app_cfg:
+            print(f"[google_api] OAuth reply failed ({exc}), falling back to SMTP App Password...", file=sys.stderr)
+            try:
+                orig = _get_via_imap(args, app_cfg)
+                to_addr = orig.get("from", "")
+                subject = orig.get("subject", "")
+                if not subject.startswith("Re:"):
+                    subject = f"Re: {subject}" if subject else "Re:"
 
-    service = build_service("gmail", "v1")
-    original = service.users().messages().get(
-        userId="me", id=args.message_id, format="metadata",
-        metadataHeaders=["From", "Subject", "Message-ID"],
-    ).execute()
-    headers = _headers_dict(original)
+                class ReplyArgs:
+                    to = to_addr
+                    subject = subject
+                    body = args.body
+                    cc = ""
+                    from_header = getattr(args, "from_header", "")
+                    html = False
+                    attachment = []
+                    attachments = []
+                    in_reply_to = args.message_id
+                    references = args.message_id
 
-    subject = headers.get("subject", "")
-    if not subject.startswith("Re:"):
-        subject = f"Re: {subject}"
-
-    message = MIMEText(args.body)
-    message["To"] = headers.get("from", "")
-    message["Subject"] = subject
-    if args.from_header:
-        message["From"] = args.from_header
-    if headers.get("message-id"):
-        message["In-Reply-To"] = headers["message-id"]
-        message["References"] = headers["message-id"]
-
-    raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
-    body = {"raw": raw, "threadId": original["threadId"]}
-
-    result = service.users().messages().send(userId="me", body=body).execute()
-    print(json.dumps({"status": "sent", "id": result["id"], "threadId": result.get("threadId", "")}, indent=2))
+                res = _send_via_smtp(ReplyArgs(), app_cfg)
+                print(json.dumps(res, indent=2, ensure_ascii=False))
+                return
+            except Exception as smtp_err:
+                print(f"Error replying via SMTP fallback after OAuth failure: {smtp_err}", file=sys.stderr)
+                sys.exit(1)
+        raise
 
 
 
@@ -1076,6 +1549,8 @@ def main():
     p.add_argument("--from", dest="from_header", default="", help="Custom From header (e.g. '\"Agent Name\" <user@example.com>')")
     p.add_argument("--html", action="store_true", help="Send body as HTML")
     p.add_argument("--thread-id", default="", help="Thread ID for threading")
+    p.add_argument("--attachment", "-a", action="append", default=[], help="Path to file to attach (can be repeated)")
+    p.add_argument("--attachments", nargs="+", default=[], help="Paths to files to attach (space-separated)")
     p.set_defaults(func=gmail_send)
 
     p = gmail_sub.add_parser("reply")
