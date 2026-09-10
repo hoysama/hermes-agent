@@ -32,6 +32,7 @@ hermes_volume = modal.Volume.from_name(
 )
 
 hermes_secrets = [
+    modal.Secret.from_name("jobhunter"),
     modal.Secret.from_name("hermes-secrets"),
     modal.Secret.from_name("cloudflare"),
     modal.Secret.from_name("codexeverywhere"),
