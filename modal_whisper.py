@@ -2,17 +2,32 @@ import modal
 
 app = modal.App("hermes-whisper")
 
-DEFAULT_MODEL = "deepdml/faster-whisper-large-v3-turbo-ct2"
+DIALECT_MODEL = "/root/models/whisper-arabic-dialectal-ct2"
+TURBO_BASE_MODEL = "deepdml/faster-whisper-large-v3-turbo-ct2"
+DEFAULT_MODEL = DIALECT_MODEL
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("ffmpeg")
-    .pip_install("faster-whisper", "nvidia-cublas-cu12", "nvidia-cudnn-cu12", "requests", "fastapi[standard]", "huggingface_hub")
+    .pip_install(
+        "faster-whisper",
+        "ctranslate2",
+        "transformers",
+        "torch",
+        "nvidia-cublas-cu12",
+        "nvidia-cudnn-cu12",
+        "requests",
+        "fastapi[standard]",
+        "huggingface_hub",
+    )
     .env({
         "LD_LIBRARY_PATH": "/usr/local/lib/python3.11/site-packages/nvidia/cublas/lib:/usr/local/lib/python3.11/site-packages/nvidia/cudnn/lib"
     })
     .run_commands(
-        "echo 'Cache bust Turbo - Preload Whisper Large-v3-Turbo (2026-09-06)'",
+        "echo 'Pre-converting oddadmix/whisper-large-v3-turbo-arabic-dialectal to CT2 (2026-09-07)'",
+        "mkdir -p /root/models",
+        "ct2-transformers-converter --model oddadmix/whisper-large-v3-turbo-arabic-dialectal --output_dir /root/models/whisper-arabic-dialectal-ct2 --copy_files tokenizer.json --quantization float16 --force",
+        "python -c 'from huggingface_hub import hf_hub_download; import shutil; p = hf_hub_download(\"openai/whisper-large-v3-turbo\", \"preprocessor_config.json\"); shutil.copy(p, \"/root/models/whisper-arabic-dialectal-ct2/preprocessor_config.json\")'",
         "python -c 'from faster_whisper import download_model; download_model(\"deepdml/faster-whisper-large-v3-turbo-ct2\")'"
     )
 )
@@ -37,8 +52,12 @@ def _get_model(model_name: str = DEFAULT_MODEL):
     if _MODEL is None:
         _load_cuda_libs()
         from faster_whisper import WhisperModel
+        import os
 
-        _MODEL = WhisperModel(model_name, device="cuda", compute_type="float16")
+        target = model_name
+        if not os.path.exists(target) and target == DIALECT_MODEL:
+            target = TURBO_BASE_MODEL
+        _MODEL = WhisperModel(target, device="cuda", compute_type="float16")
     return _MODEL
 
 
@@ -60,7 +79,7 @@ def transcribe(data: dict):
     language = data.get("language", None)
     task = data.get("task", "transcribe")  # "transcribe" or "translate"
     req_model = data.get("model", "")
-    model_name = DEFAULT_MODEL if not req_model or req_model in ("turbo", "large-v3-turbo", "large-v3") else req_model
+    model_name = DEFAULT_MODEL if not req_model or req_model in ("turbo", "large-v3-turbo", "large-v3", "dialect", "arabic", "default") else req_model
     word_timestamps = data.get("word_timestamps", False)
 
     if not audio_url and not audio_b64:
