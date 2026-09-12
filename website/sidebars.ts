@@ -119,6 +119,7 @@ const sidebars: SidebarsConfig = {
             'user-guide/features/web-search',
             'user-guide/features/x-search',
             'user-guide/features/browser',
+            'user-guide/features/credential-vault',
             'user-guide/features/computer-use',
             'user-guide/features/vision',
             'user-guide/features/image-generation',
@@ -320,6 +321,7 @@ const sidebars: SidebarsConfig = {
                   items: [
                     'user-guide/skills/optional/autonomous-ai-agents/autonomous-ai-agents-antigravity-cli',
                     'user-guide/skills/optional/autonomous-ai-agents/autonomous-ai-agents-blackbox',
+                    'user-guide/skills/optional/autonomous-ai-agents/autonomous-ai-agents-dynamic-workflow',
                     'user-guide/skills/optional/autonomous-ai-agents/autonomous-ai-agents-grok',
                     'user-guide/skills/optional/autonomous-ai-agents/autonomous-ai-agents-honcho',
                     'user-guide/skills/optional/autonomous-ai-agents/autonomous-ai-agents-openhands',
@@ -372,7 +374,6 @@ const sidebars: SidebarsConfig = {
                     'user-guide/skills/optional/creative/creative-sketch',
                     'user-guide/skills/optional/creative/creative-social-media-content-calendar',
                     'user-guide/skills/optional/creative/creative-tldraw-offline',
-                    'user-guide/skills/optional/creative/creative-touchdesigner-mcp',
                     'user-guide/skills/optional/creative/creative-unreal-mcp',
                   ],
                 },
