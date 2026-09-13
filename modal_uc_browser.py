@@ -27,7 +27,7 @@ sb_image = (
         "uvicorn",
     )
     .run_commands(
-        "echo 'Cache bust 2 - Update SeleniumBase (2026-09-06)'",
+        "echo 'Cache bust 3 - Update SeleniumBase to v4.54.4 (2026-09-13)'",
         "wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg",
         "echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main' > /etc/apt/sources.list.d/google-chrome.list",
         "apt-get update && apt-get install -y google-chrome-stable",
