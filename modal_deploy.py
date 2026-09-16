@@ -54,6 +54,21 @@ hermes_image = (
         "ca-certificates",
         "unzip",
         "gnupg",
+        "libnss3",
+        "libgbm1",
+        "libasound2",
+        "libx11-xcb1",
+        "libxcomposite1",
+        "libxdamage1",
+        "libxrandr2",
+        "libatk1.0-0",
+        "libatk-bridge2.0-0",
+        "libcups2",
+        "libdrm2",
+        "libxkbcommon0",
+        "libxfixes3",
+        "libpango-1.0-0",
+        "libcairo2",
     )
     .run_commands(
         "curl -fsSL https://deb.nodesource.com/setup_24.x | bash -",
@@ -66,6 +81,9 @@ hermes_image = (
         "apt-get update && apt-get install -y gh",
         "bun add -g wrangler@latest",
         "ln -s /root/.bun/bin/wrangler /usr/local/bin/wrangler",
+        'export BUN_INSTALL="$HOME/.bun" && export PATH="$BUN_INSTALL/bin:$PATH" && bun i -g agent-browser@latest',
+        "ln -s /root/.bun/bin/agent-browser /usr/local/bin/agent-browser || true",
+        "agent-browser install",
     )
     .add_local_dir(
         ".",
@@ -82,6 +100,10 @@ hermes_image = (
     )
     .run_commands(
         f"pip install -e '{HERMES_ROOT}[messaging]'",
+    )
+    .run_commands(
+        "pip install --no-cache-dir 'browser-use>=0.13.10,<1'",
+        "browser-use install",
     )
 )
 
@@ -136,6 +158,9 @@ def build_runtime_environment() -> dict[str, str]:
             os.replace(temporary_path, config_path)
             os.chmod(config_path, 0o600)
 
+    env["BROWSER_USE_HEADLESS"] = "true"
+    env["AGENT_BROWSER_ARGS"] = "--no-sandbox,--disable-dev-shm-usage"
+
     return env
 
 
@@ -171,11 +196,17 @@ def scrub_persisted_secrets() -> None:
     min_containers=1,
     max_containers=1,
     timeout=86400,
+    memory=3072,
 )
 @modal.web_server(
     port=GATEWAY_PORT,
-    startup_timeout=120,
+    startup_timeout=300,
 )
+# عقد تهيئة Browser-Use / Browser:
+# أي كود داخل Hermes يقوم بإنشاء BrowserProfile أو Browser يجب أن يمرر:
+# - headless=True
+# - chromium_sandbox=False
+# - args=["--no-sandbox", "--disable-dev-shm-usage"]
 def api_server():
     """Run the Hermes messaging gateway and API server."""
     import os
