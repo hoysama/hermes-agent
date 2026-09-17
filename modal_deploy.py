@@ -11,12 +11,10 @@ HERMES_HOME = "/root/.hermes"
 GATEWAY_PORT = 8642
 
 CUSTOM_PROVIDER_ENV = {
-    "hcnsec": "HCNSEC_API_KEY",
-    "lyclaude": "LYCLAUDE_API_KEY",
-    "vyceai": "VYCEAI_API_KEY",
-    "nararouter": "NARAROUTER_API_KEY",
     "zenmux": "ZENMUX_API_KEY",
     "opencode": "OPENCODE_API_KEY",
+    "nous": "NOUS_API_KEY",
+    "cheaperinference": "CHEAPER_INFERENCE_API_KEY",
 }
 SECRET_NAME_RE = re.compile(
     r"(?:API_KEY|API_TOKEN|TOKEN|SECRET|PASSWORD|PASSPHRASE)$", re.IGNORECASE
@@ -33,10 +31,8 @@ hermes_secrets = [
     modal.Secret.from_name("hermes-secrets"),
     modal.Secret.from_name("telegram"),
     modal.Secret.from_name("cloudflare"),
-    modal.Secret.from_name("codexeverywhere"),
-        modal.Secret.from_name("github-secret"),
-        modal.Secret.from_name("circlecicli"),
-    modal.Secret.from_name("OPENROUTER"),
+    modal.Secret.from_name("github-secret"),
+    modal.Secret.from_name("circlecicli"),
     modal.Secret.from_name("hermes-provider-keys"),
     modal.Secret.from_name("modal_proxy_tokens"),
     modal.Secret.from_name("searxng"),
