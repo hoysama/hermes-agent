@@ -89,6 +89,7 @@ def build_runtime_environment() -> dict[str, str]:
     env["TERMINAL_CWD"] = f"{HERMES_HOME}/workspaces"
     env["HERMES_AGENT_TIMEOUT_WARNING"] = "3600"
     env["HERMES_AGENT_TIMEOUT"] = "7200"
+    env["GATEWAY_MULTIPLEX_PROFILES"] = "false"
 
     if env.get("GITHUB_TOKEN"):
         token = env["GITHUB_TOKEN"]
