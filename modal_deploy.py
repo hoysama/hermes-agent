@@ -206,12 +206,9 @@ def scrub_persisted_secrets() -> None:
 # - args=["--no-sandbox", "--disable-dev-shm-usage"]
 def api_server():
     """Run the Hermes messaging gateway and API server."""
-    import os
     import socket
     import subprocess
-    import threading
     import time
-    import urllib.request
     
     # Reload the volume to get latest config if the container was reused
     hermes_volume.reload()
@@ -229,7 +226,7 @@ def api_server():
         cwd=HERMES_ROOT,
     )
 
-    # Wait until gateway port is listening on localhost before returning
+    # Wait until gateway port is listening on localhost before proceeding
     start_time = time.time()
     ready = False
     while time.time() - start_time < 280:
@@ -246,16 +243,5 @@ def api_server():
         process.terminate()
         raise RuntimeError(f"Hermes gateway failed to bind to 127.0.0.1:{GATEWAY_PORT} within 280s.")
 
-    # Background keep-alive heartbeat to prevent Modal idle container recycling
-    def _keep_alive():
-        public_url = f"https://hoysama--{APP_NAME}-api-server.modal.run/health"
-        local_url = f"http://127.0.0.1:{GATEWAY_PORT}/health"
-        while True:
-            time.sleep(300)  # Every 5 minutes
-            for url in (local_url, public_url):
-                try:
-                    urllib.request.urlopen(url, timeout=10)
-                except Exception:
-                    pass
-
-    threading.Thread(target=_keep_alive, daemon=True).start()
+    # Block indefinitely so Modal treats the container as actively executing and never recycles it
+    return process.wait()
