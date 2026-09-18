@@ -858,3 +858,54 @@ async def test_raw_output_modes_are_human_facing(monkeypatch, tmp_path):
         assert "proc_deadbeef" not in text and "[Background process" not in text and "~" not in text
         assert "\x1b[" not in text
         assert "make -j8 all" in text
+
+
+@pytest.mark.asyncio
+async def test_agent_notify_off_mode_suppresses_injection(monkeypatch, tmp_path):
+    """When notify_mode is 'off', notify_on_complete must not inject or send any message."""
+    import tools.process_registry as pr_module
+
+    session = SimpleNamespace(
+        output_buffer="done\n", exited=True, exit_code=0, command="echo done", started_at=None,
+    )
+    monkeypatch.setattr(pr_module, "process_registry", _FakeRegistry([session], consumed=False))
+
+    async def _instant_sleep(*_a, **_kw):
+        pass
+    monkeypatch.setattr(asyncio, "sleep", _instant_sleep)
+
+    runner = _build_runner(monkeypatch, tmp_path, "off")
+    runner._enqueue_process_completion_notification = AsyncMock(return_value=True)
+    adapter = runner.adapters[Platform.TELEGRAM]
+    watcher = {**_watcher_dict(), "notify_on_complete": True}
+
+    await runner._run_process_watcher(watcher)
+
+    runner._enqueue_process_completion_notification.assert_not_awaited()
+    adapter.send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_agent_notify_error_mode_suppresses_success_exit(monkeypatch, tmp_path):
+    """When notify_mode is 'error', a successful process (exit 0) must not inject or send any message."""
+    import tools.process_registry as pr_module
+
+    session = SimpleNamespace(
+        output_buffer="done\n", exited=True, exit_code=0, command="echo done", started_at=None,
+    )
+    monkeypatch.setattr(pr_module, "process_registry", _FakeRegistry([session], consumed=False))
+
+    async def _instant_sleep(*_a, **_kw):
+        pass
+    monkeypatch.setattr(asyncio, "sleep", _instant_sleep)
+
+    runner = _build_runner(monkeypatch, tmp_path, "error")
+    runner._enqueue_process_completion_notification = AsyncMock(return_value=True)
+    adapter = runner.adapters[Platform.TELEGRAM]
+    watcher = {**_watcher_dict(), "notify_on_complete": True}
+
+    await runner._run_process_watcher(watcher)
+
+    runner._enqueue_process_completion_notification.assert_not_awaited()
+    adapter.send.assert_not_awaited()
+

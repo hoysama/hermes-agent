@@ -1823,7 +1823,7 @@ class GatewayNotificationsMixin:
             notify_mode = self._load_background_notifications_mode()
         logger.debug("Process watcher started: %s (every %ss, notify=%s, agent_notify=%s)",
                       session_id, interval, notify_mode, agent_notify)
-        silent = notify_mode == "off" and not agent_notify
+        silent = notify_mode == "off"
         last_output_len = 0
         while True:
             await asyncio.sleep(interval)
@@ -1842,6 +1842,8 @@ class GatewayNotificationsMixin:
                 # Agent-notify: inject a synthetic message unless the agent already consumed the result via
                 # wait/log (poll() is read-only and deliberately does NOT mark consumed).
                 if agent_notify and not process_registry.is_completion_consumed(session_id):
+                    if notify_mode == "off" or (notify_mode == "error" and session.exit_code in {0, None}):
+                        break
                     completion_evt = self._build_process_completion_event(watcher, session, session_id)
                     synth_text = format_process_notification(completion_evt)
                     if not synth_text:
