@@ -3944,11 +3944,18 @@ class TelegramAdapter(BasePlatformAdapter):
             text = f"❓ {_html.escape(question)}"
             keyboard = None
             if choices:
-                # Full option text in the body (mobile truncates button labels); buttons keep numeric labels.
+                # Full option text in the body (mobile truncates button labels); buttons keep numeric labels + descriptive text.
                 text += "\n\n" + "\n".join(f"{i + 1}. {_html.escape(str(c))}" for i, c in enumerate(choices))
                 # Telegram caps callback_data at 64 bytes; keep "cl:<id>:<idx>" short.
-                rows = [[InlineKeyboardButton(str(idx + 1), callback_data=f"cl:{clarify_id}:{idx}")] for idx in range(len(choices))]
-                rows.append([InlineKeyboardButton("✏️ Other (type answer)", callback_data=f"cl:{clarify_id}:other")])
+                rows = []
+                for idx, c in enumerate(choices):
+                    c_clean = str(c).strip()
+                    if c_clean:
+                        btn_label = f"{idx + 1}. {c_clean}" if len(c_clean) <= 32 else f"{idx + 1}. {c_clean[:29]}…"
+                    else:
+                        btn_label = str(idx + 1)
+                    rows.append([InlineKeyboardButton(btn_label, callback_data=f"cl:{clarify_id}:{idx}")])
+                rows.append([InlineKeyboardButton("✏️ Other / رد مخصص", callback_data=f"cl:{clarify_id}:other")])
                 keyboard = InlineKeyboardMarkup(rows)
             return text, keyboard, lambda msg: self._clarify_state.__setitem__(clarify_id, session_key)
         return await self._send_prompt(

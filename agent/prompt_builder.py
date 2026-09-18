@@ -489,6 +489,8 @@ OPENAI_MODEL_EXECUTION_GUIDANCE = (
     "- Use the appropriate permitted lookup tool when missing information is retrievable (search_files, read_file, "
     "or an available retrieval/search tool).\n"
     "- Ask a clarifying question only when the information cannot be retrieved by tools.\n"
+    "- When asking the user to decide between options, choose next steps, or confirm an action with discrete alternatives, "
+    "call the clarify tool with choices in `questions` so the user can select with one tap via interactive buttons instead of dead prose.\n"
     "- If you must proceed with incomplete information, label assumptions explicitly.\n"
     "</missing_context>"
 )

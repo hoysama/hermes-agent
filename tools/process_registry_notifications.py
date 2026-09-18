@@ -29,7 +29,8 @@ class ProcessNotificationBatch:
             return messages[0]
         header = (f"[IMPORTANT: {len(messages)} background processes completed. "
                   "Treat these results as one batch and give one consolidated response; "
-                  "preserve failures and actionable results.]")
+                  "preserve failures and actionable results. "
+                  "If a result does not change the current conclusion or was already reported, absorb it silently and do not message the user.]")
         return "\n\n".join((header, *messages))
 
     def display_text(self, registry) -> str:
@@ -406,6 +407,11 @@ def format_process_notification(evt: dict) -> "str | None":
             "...(output trimmed — subagent-owned process; see the "
             "delegation's live transcript for full output)\n"
             + _out[-600:])
+    _silence_hint = (
+        "\nIf this work was already verified/reported or does not change your conclusion, "
+        "absorb it silently and do not send a redundant update message to the user."
+        if _exit in (0, "0") else ""
+    )
     return (
         f"[IMPORTANT: Background process {_sid} {_completion_status(evt)} (exit code {_exit}{_signal}).\n"
-        f"{attribution}Command: {_cmd}\nOutput:\n{_out}]")
+        f"{attribution}Command: {_cmd}\nOutput:\n{_out}{_silence_hint}]")
