@@ -248,7 +248,7 @@ def api_server():
 
     # Background keep-alive heartbeat to prevent Modal idle container recycling
     def _keep_alive():
-        public_url = f"https://hoysama--{APP_NAME}-{api_server.__name__}.modal.run/health"
+        public_url = f"https://hoysama--{APP_NAME}-api-server.modal.run/health"
         local_url = f"http://127.0.0.1:{GATEWAY_PORT}/health"
         while True:
             time.sleep(300)  # Every 5 minutes
