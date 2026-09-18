@@ -207,7 +207,11 @@ def scrub_persisted_secrets() -> None:
 def api_server():
     """Run the Hermes messaging gateway and API server."""
     import os
+    import socket
     import subprocess
+    import threading
+    import time
+    import urllib.request
     
     # Reload the volume to get latest config if the container was reused
     hermes_volume.reload()
@@ -219,9 +223,39 @@ def api_server():
     env["API_SERVER_HOST"] = "0.0.0.0"
     env.setdefault("TELEGRAM_ALLOWED_USERS", "*")
 
-    subprocess.run(
+    process = subprocess.Popen(
         ["hermes", "gateway", "run"],
         env=env,
         cwd=HERMES_ROOT,
-        check=True,
     )
+
+    # Wait until gateway port is listening on localhost before returning
+    start_time = time.time()
+    ready = False
+    while time.time() - start_time < 280:
+        if process.poll() is not None:
+            raise RuntimeError(f"Hermes gateway exited prematurely with code {process.returncode}")
+        try:
+            with socket.create_connection(("127.0.0.1", GATEWAY_PORT), timeout=2.0):
+                ready = True
+                break
+        except (ConnectionRefusedError, socket.timeout, OSError):
+            time.sleep(1.0)
+
+    if not ready:
+        process.terminate()
+        raise RuntimeError(f"Hermes gateway failed to bind to 127.0.0.1:{GATEWAY_PORT} within 280s.")
+
+    # Background keep-alive heartbeat to prevent Modal idle container recycling
+    def _keep_alive():
+        public_url = f"https://hoysama--{APP_NAME}-{api_server.__name__}.modal.run/health"
+        local_url = f"http://127.0.0.1:{GATEWAY_PORT}/health"
+        while True:
+            time.sleep(300)  # Every 5 minutes
+            for url in (local_url, public_url):
+                try:
+                    urllib.request.urlopen(url, timeout=10)
+                except Exception:
+                    pass
+
+    threading.Thread(target=_keep_alive, daemon=True).start()
