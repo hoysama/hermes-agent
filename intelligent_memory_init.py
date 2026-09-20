@@ -141,8 +141,8 @@ class IntelligentMemoryProvider(MemoryProvider):
 
     def _apply_config(self, config: dict[str, Any]) -> None:
         self.cloud_mode = _cloud_mode(config.get("cloud_mode", "selective"))
-        self.max_recall_facts = max(1, min(20, int(config.get("max_recall_facts", 6))))
-        self.max_recall_chars = max(200, int(config.get("max_recall_chars", 1800)))
+        self.max_recall_facts = max(1, min(50, int(config.get("max_recall_facts", 25))))
+        self.max_recall_chars = max(200, int(config.get("max_recall_chars", 10000)))
 
     @staticmethod
     def _register_auxiliary_task() -> None:
@@ -335,7 +335,7 @@ class IntelligentMemoryProvider(MemoryProvider):
                     }
                 )
             if tool_name == "intelligent_memory_recall":
-                limit = max(1, min(20, int(args.get("limit") or self.max_recall_facts)))
+                limit = max(1, min(50, int(args.get("limit") or self.max_recall_facts)))
                 facts = self.store.search(
                     str(args.get("query") or ""),
                     target=str(args["target"]) if args.get("target") else None,
