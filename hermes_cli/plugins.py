@@ -130,6 +130,12 @@ VALID_HOOKS: Set[str] = {
     # error_body may be unredacted.
     "transform_api_error_classification", "on_session_start", "on_session_end",
     "on_session_finalize", "on_session_reset",
+    # pre_compress: before context compression builds its summary. A callback
+    # receives (session_id) and may return a short string to include in the
+    # summary prompt (non-empty returns are joined); None/"" contributes
+    # nothing. First real consumer: czip-auto's verbatim-pack pointer line.
+    # Fired rarely (compression only), must be fast and never raise.
+    "pre_compress",
     # on_skill_lifecycle: successful skill lifecycle facts (local skill name visible to plugins).
     "on_skill_lifecycle", "subagent_start", "subagent_stop",
     # pre_gateway_dispatch: once per incoming MessageEvent, after the internal-event guard, BEFORE

@@ -2952,7 +2952,36 @@ def _pre_compress_memory_context(agent: Any, messages: list, checkpoint_required
             _maybe_ctx = memory_manager.on_pre_compress(messages, evidence_messages=evidence_messages)
             if isinstance(_maybe_ctx, str):
                 memory_context = sanitize_memory_context(_maybe_ctx)
+    plugin_context = _pre_compress_plugin_context(agent)
+    if plugin_context.strip():
+        memory_context = f"{memory_context}\n\n{plugin_context}" if memory_context.strip() else plugin_context
     return memory_context
+
+
+def _pre_compress_plugin_context(agent: Any) -> str:
+    """General-plugin contributions to the compression summary prompt ("" if none).
+
+    Unlike the memory-provider channel above, any plugin may contribute via the
+    ``pre_compress`` hook: callbacks receive ``session_id`` and may return a
+    short string (joined when several contribute). Best-effort and non-raising
+    by contract — a plugin failure must never block or alter compression.
+    The no-plugin default returns "" so the summary prompt is byte-identical.
+    """
+    try:
+        from hermes_cli.lifecycle import invoke_hook as _invoke_hook
+
+        session_id = getattr(agent, "session_id", "") or ""
+        parts = _invoke_hook("pre_compress", session_id=session_id)
+    except Exception:
+        return ""
+    texts = []
+    for part in parts or []:
+        try:
+            if isinstance(part, str) and part.strip():
+                texts.append(sanitize_memory_context(part))
+        except Exception:
+            continue
+    return "\n\n".join(t for t in texts if t.strip())
 
 
 def _resolve_compress_call(

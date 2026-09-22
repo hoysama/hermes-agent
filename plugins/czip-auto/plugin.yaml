@@ -1,0 +1,7 @@
+name: czip-auto
+version: 1.0.0
+description: "Automatic verbatim archive of long sessions. Packs long transcripts at session end via hooks — no agent action required."
+author: "hoy + Hermes Agent"
+hooks:
+  - on_session_end
+  - pre_compress
