@@ -121,10 +121,10 @@ def _handle_map(args: Dict[str, Any], **_: Any) -> str:
 
 
 def _handle_search(args: Dict[str, Any], **_: Any) -> str:
-    pack = str(args.get("pack", ""))
-    query = str(args.get("query", ""))
-    if not pack or not query:
-        return json.dumps({"success": False, "error": "pack and query are required"})
+    pack = str(args.get("pack", "") or "").strip()
+    query = str(args.get("query", "") or "").strip()
+    if not query:
+        return json.dumps({"success": False, "error": "query is required"})
     try:
         return packer.search_pack(_tool_home(), pack, query)
     except Exception as exc:
@@ -148,7 +148,7 @@ def _handle_range(args: Dict[str, Any], **_: Any) -> str:
 
 _MAP_SCHEMA = {
     "name": "czip_map",
-    "description": "Show the small retrieval map of an archived session pack.",
+    "description": "Show the small retrieval map of an archived session pack (counts, user requests, recent messages).",
     "parameters": {
         "type": "object",
         "properties": {"pack": {"type": "string", "description": "Pack id, session id/prefix, or file name."}},
@@ -158,24 +158,28 @@ _MAP_SCHEMA = {
 
 _SEARCH_SCHEMA = {
     "name": "czip_search",
-    "description": "Search inside an archived session pack for a query.",
+    "description": (
+        "Search verbatim archived conversation history and past sessions. "
+        "Use this tool whenever the user asks about past discussions, previous session details, "
+        "or exact wording. Searches across all archived session packs if 'pack' is omitted."
+    ),
     "parameters": {
         "type": "object",
         "properties": {
-            "pack": {"type": "string", "description": "Pack id, session id/prefix, or file name."},
-            "query": {"type": "string", "description": "Substring to find (case-insensitive)."},
+            "query": {"type": "string", "description": "Substring or keyword to find in archived transcripts (case-insensitive)."},
+            "pack": {"type": "string", "description": "Optional pack id or filename. Omit or leave empty to search across all archived session packs."},
         },
-        "required": ["pack", "query"],
+        "required": ["query"],
     },
 }
 
 _RANGE_SCHEMA = {
     "name": "czip_range",
-    "description": "Read exact messages a-b from an archived session pack.",
+    "description": "Read exact messages a-b from an archived session pack after finding the pack and indices with czip_search.",
     "parameters": {
         "type": "object",
         "properties": {
-            "pack": {"type": "string", "description": "Pack id, session id/prefix, or file name."},
+            "pack": {"type": "string", "description": "Pack id, session id, or file name returned by czip_search."},
             "start": {"type": "integer", "description": "First message index (0-based)."},
             "end": {"type": "integer", "description": "Last message index (inclusive)."},
         },

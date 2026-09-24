@@ -170,6 +170,16 @@ class TestRetrieval:
         assert json.loads(packer.search_pack(home_a, "nope", "x"))["success"] is False
         assert json.loads(packer.range_pack(home_a, "nope", 0, 1))["success"] is False
 
+    def test_search_multi_pack_when_pack_is_omitted(self, packer, home_a):
+        dest, msgs = self._pack(packer, home_a)
+        found = json.loads(packer.search_pack(home_a, None, "acme"))
+        assert found["success"] is True
+        assert len(found["hits"]) == 1
+        assert found["hits"][0]["pack"] == dest.stem
+        found_all = json.loads(packer.search_pack(home_a, "all", "acme"))
+        assert found_all["success"] is True
+        assert len(found_all["hits"]) == 1
+
 
 # ---------------------------------------------------------------------------
 # Retention caps: the pack directory must not grow without bound

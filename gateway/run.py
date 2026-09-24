@@ -1797,12 +1797,15 @@ def _load_profile_secret_scope(profile_home: "Path") -> dict:
     """Hydrate and load one profile's secrets under its home override."""
     from hermes_constants import set_hermes_home_override, reset_hermes_home_override
     # Caller already hydrated external sources off-loop (#99519).
-    from agent.secret_scope import build_profile_secret_scope
+    from agent.secret_scope import _is_process_home, build_profile_secret_scope
     from hermes_cli.env_loader import hydrate_profile_secret_sources
+    from tui_gateway.launch_profile_policy import launch_secret_scope
 
     home_token = set_hermes_home_override(str(profile_home))
     try:
         hydrate_profile_secret_sources(Path(profile_home))
+        if _is_process_home(profile_home):
+            return launch_secret_scope(profile_home)
         return build_profile_secret_scope(Path(profile_home))
     finally:
         reset_hermes_home_override(home_token)
@@ -1817,19 +1820,21 @@ def _profile_runtime_scope(
     ``set_secret_scope`` makes the profile ``.env`` the credential source without mutating
     ``os.environ``, so subprocesses never inherit cross-profile secrets."""
     from hermes_constants import set_hermes_home_override, reset_hermes_home_override
-    from agent.secret_scope import set_secret_scope, reset_secret_scope
+    from agent.secret_scope import _is_process_home, set_secret_scope, reset_secret_scope
 
     home_token = secret_token = None
     try:
         home_token = set_hermes_home_override(str(profile_home))
+        is_own = _is_process_home(profile_home)
         if prepared_secret_scope is not None:
             secrets = prepared_secret_scope
         elif hydrate_secrets:
             secrets = _load_profile_secret_scope(Path(profile_home))
         else:
             from agent.secret_scope import build_profile_secret_scope  # caller already hydrated off-loop
-            secrets = build_profile_secret_scope(Path(profile_home))
-        secret_token = set_secret_scope(secrets, profile_home=str(profile_home))
+            from tui_gateway.launch_profile_policy import launch_secret_scope
+            secrets = launch_secret_scope(Path(profile_home)) if is_own else build_profile_secret_scope(Path(profile_home))
+        secret_token = set_secret_scope(secrets, profile_home=None if is_own else str(profile_home))
         # Install the routed profile's COMPLETE terminal policy, never ambient TERMINAL_* a prior turn set.
         # Without it terminal_tool reads the process-global TERMINAL_* vars a previous profile's turn may have
         # pinned (first-writer-wins backend leak; #68559).

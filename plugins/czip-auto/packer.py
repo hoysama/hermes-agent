@@ -270,19 +270,65 @@ def map_pack(home: Path, pack_id: str) -> str:
     return build_map(meta, records)
 
 
-def search_pack(home: Path, pack_id: str, query: str, *, limit: int = 20) -> str:
-    path = _resolve_pack_file(home, pack_id)
-    if path is None:
-        return json.dumps({"success": False, "error": f"pack not found: {pack_id}"})
-    _, records = read_pack(path)
-    q = (query or "").lower()
+def search_pack(home: Path, pack_id: Optional[str], query: str, *, limit: int = 20) -> str:
+    q = (query or "").strip().lower()
+    if not q:
+        return json.dumps({"success": False, "error": "query is required"})
+
+    # Specific pack search
+    if pack_id and str(pack_id).strip() not in {"all", "*", ""}:
+        path = _resolve_pack_file(home, str(pack_id).strip())
+        if path is None:
+            return json.dumps({"success": False, "error": f"pack not found: {pack_id}"})
+        _, records = read_pack(path)
+        pid = path.stem
+        hits = []
+        for i, r in enumerate(records):
+            if q in r["content"].lower():
+                hits.append({"pack": pid, "index": i, "role": r["role"], "snippet": r["content"][:200]})
+                if len(hits) >= limit:
+                    break
+        return json.dumps({"success": True, "query": query, "pack": pid, "hits": hits}, ensure_ascii=False)
+
+    # Multi-pack search across all available session packs
+    d = pack_dir_for(home)
+    if not d.is_dir():
+        return json.dumps({"success": True, "query": query, "hits": [], "total_packs_searched": 0})
+
+    index = read_index(home)
+    pack_files: List[Path] = []
+    if index:
+        for sid, entry in sorted(index.items(), key=lambda kv: kv[1].get("packed_at", 0) if isinstance(kv[1], dict) else 0, reverse=True):
+            if isinstance(entry, dict) and entry.get("file"):
+                p = d / str(entry["file"])
+                if p.is_file() and p not in pack_files:
+                    pack_files.append(p)
+    for p in sorted(d.glob(f"*{PACK_SUFFIX}"), key=lambda x: x.stat().st_mtime, reverse=True):
+        if p not in pack_files:
+            pack_files.append(p)
+
     hits = []
-    for i, r in enumerate(records):
-        if q and q in r["content"].lower():
-            hits.append({"index": i, "role": r["role"], "snippet": r["content"][:200]})
-            if len(hits) >= limit:
-                break
-    return json.dumps({"success": True, "query": query, "hits": hits}, ensure_ascii=False)
+    for path in pack_files:
+        try:
+            meta, records = read_pack(path)
+            pid = path.stem
+            for i, r in enumerate(records):
+                if q in r["content"].lower():
+                    hits.append({
+                        "pack": pid,
+                        "session_id": meta.get("session_id", ""),
+                        "index": i,
+                        "role": r["role"],
+                        "snippet": r["content"][:200],
+                    })
+                    if len(hits) >= limit:
+                        break
+        except Exception:
+            continue
+        if len(hits) >= limit:
+            break
+
+    return json.dumps({"success": True, "query": query, "hits": hits, "total_packs_searched": len(pack_files)}, ensure_ascii=False)
 
 
 def range_pack(home: Path, pack_id: str, start: int, end: int) -> str:

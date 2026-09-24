@@ -17,9 +17,8 @@ When adding or removing an inference provider for Hermes:
    `modal volume put hermes-storage ~/.hermes/config.yaml /profiles/projectsentinelsupport/config.yaml --force`
    `modal volume put hermes-storage ~/.hermes/config.yaml /profiles/jobhunter/config.yaml --force`
 3. **Re-deploy Active Hermes Applications**: Deploy only the active Hermes instances to Modal in order:
-   - **Hermes Personal**: `modal deploy modal_deploy.py` # personal assistant for the user (نشط)
-   - **Hermes Jobhunter**: `modal deploy modal_deploy_jobhunter.py` # automated job search & applications (نشط)
-   > ⛔ **تنبيه حاسم ومستمر:** **Hermes Support** (`modal_deploy_support.py`) و **Hermes Hazem** (`modal_deploy_hazem.py`) و **Hermes Fikra** (`modal_deploy_fikra.py`) **معطلون صراحةً حالياً**، ويُحظر تماماً نشر أي منهم لتجنب تنشيطهم وإيقاظهم بالخطأ.
+   - **Hermes Personal**: `modal deploy modal_deploy.py` # personal assistant for the user (نشط وحيد)
+   > ⛔ **تنبيه حاسم ومستمر:** **Hermes Jobhunter** (`modal_deploy_jobs.py`), **Hermes Support** (`modal_deploy_support.py`), **Hermes Hazem** (`modal_deploy_hazem.py`), و **Hermes Fikra** (`modal_deploy_fikra.py`) **معطلون صراحةً حالياً**، ويُحظر تماماً نشر أي منهم لتجنب تنشيطهم وإيقاظهم بالخطأ.
 4. **Verify Provider Registration**: Ensure the new provider appears in the list of available providers by running `hermes providers list` or checking the Modal dashboard.
 
 ---
@@ -79,7 +78,7 @@ When modifying any tool or backend microservice:
    `modal volume put hermes-storage ~/.hermes/config.yaml /profiles/jobhunter/config.yaml --force`
    Never copy `.env` files or secret values to the Modal Volume. Secrets are
    injected by the bound Modal Secret at process startup.
-4. Redeploy only active Hermes instances (`modal deploy modal_deploy.py`) so the updated tool definitions and configs take effect in active gateway sessions. Never redeploy `modal_deploy_support.py` or `modal_deploy_hazem.py` as they are explicitly disabled.
+4. Redeploy only active Hermes instances (`modal deploy modal_deploy.py`) so the updated tool definitions and configs take effect in active gateway sessions. Never redeploy `modal_deploy_jobs.py`, `modal_deploy_support.py`, `modal_deploy_hazem.py`, or `modal_deploy_fikra.py` as they are explicitly disabled.
 
 ### 4. Modal Proxy Auth Security & Secrets Management
 - **Proxy Token Authorization**: All auxiliary microservices are secured with `requires_proxy_auth=True`. Tools in `tools/` and `plugins/` must send `get_modal_auth_headers()` from `tools/tool_backend_helpers.py`.
