@@ -72,6 +72,26 @@ def has_direct_modal_credentials() -> bool:
         return False
 
 
+def get_modal_auth_headers() -> Dict[str, str]:
+    """Return Modal Proxy Auth headers if MODAL_PROXY_TOKEN_ID and MODAL_PROXY_TOKEN_SECRET are set."""
+    token_id = _scoped_credential("MODAL_PROXY_TOKEN_ID")
+    token_secret = _scoped_credential("MODAL_PROXY_TOKEN_SECRET")
+    if not token_id or not token_secret:
+        try:
+            from hermes_cli.config import get_env_value
+            token_id = token_id or str(get_env_value("MODAL_PROXY_TOKEN_ID") or "").strip()
+            token_secret = token_secret or str(get_env_value("MODAL_PROXY_TOKEN_SECRET") or "").strip()
+        except Exception:
+            pass
+    token_id = token_id or os.getenv("MODAL_PROXY_TOKEN_ID", "").strip()
+    token_secret = token_secret or os.getenv("MODAL_PROXY_TOKEN_SECRET", "").strip()
+    headers: Dict[str, str] = {}
+    if token_id and token_secret:
+        headers["Modal-Key"] = token_id
+        headers["Modal-Secret"] = token_secret
+    return headers
+
+
 def resolve_modal_backend_state(modal_mode: object | None, *, has_direct: bool,
                                 managed_ready: bool,
                                 managed_enabled: bool | None = None) -> Dict[str, Any]:

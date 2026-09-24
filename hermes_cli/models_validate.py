@@ -226,11 +226,36 @@ def _validate_ollama_native(req: _Request) -> Optional[dict[str, Any]]:
 def _validate_custom(req: _Request) -> dict[str, Any]:
     from hermes_cli import models as _m
 
+    # Check if this is a custom provider with discover_models=False
+    from hermes_cli.config import load_config, get_compatible_custom_providers
+    try:
+        cfg = load_config()
+        custom_provs = get_compatible_custom_providers(cfg)
+        slug_to_match = req.normalized[7:] if req.normalized.startswith("custom:") else req.normalized
+        provider_config = next((p for p in custom_provs if p.get("name", "").lower() == slug_to_match), None)
+    except Exception:
+        provider_config = None
+
+    discover = provider_config.get("discover_models", True) if provider_config else True
+
+    if not discover:
+        api_models = provider_config.get("models") or []
+        if api_models:
+            match = _match_in_catalog(req.lookup, api_models, suggest_query=req.requested)
+            verdict = match.verdict(req)
+            if verdict is not None:
+                return verdict
+        return _soft_accept(
+            f"Discovery disabled for custom provider '{req.normalized}'. Accepted model `{req.requested}`."
+        )
+
     # Probe with the auth shape the api_mode expects.
     anthropic_style = req.api_mode == "anthropic_messages"
     probe_kwargs = {"api_mode": req.api_mode} if anthropic_style else {}
     probe = _m.probe_api_models(req.api_key, req.base_url, request_headers=req.headers, **probe_kwargs)
     api_models = probe.get("models")
+    if not api_models and provider_config and provider_config.get("models"):
+        api_models = provider_config.get("models")
     if api_models is not None:
         match = _match_in_catalog(req.lookup, api_models, suggest_query=req.requested)
         verdict = match.verdict(req)

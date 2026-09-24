@@ -2836,7 +2836,7 @@ def _validate_base_url(base_url: str) -> None:
     """Reject obviously broken custom endpoint URLs before they reach httpx."""
     from urllib.parse import urlparse
     candidate = str(base_url or "").strip()
-    if not candidate or candidate.startswith("acp://"):
+    if not candidate or candidate.startswith("acp://") or candidate.startswith("moa://"):
         return
     try:
         parsed = urlparse(candidate)

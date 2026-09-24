@@ -776,7 +776,7 @@ SESSION_SEARCH_SCHEMA = {
                 ),
             },
         },
-        "required": [],
+        "required": ["query"],
     },
 }
 

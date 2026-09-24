@@ -373,10 +373,19 @@ def get_external_skills_dirs() -> List[Path]:
     local_skills = get_skills_dir().resolve()
     result: List[Path] = []
     for entry in _config_str_list(skills_cfg.get("external_dirs")):
-        p = _home_relative(_expand_path(entry)).resolve()
+        try:
+            p = _home_relative(_expand_path(entry)).resolve()
+        except OSError:
+            logger.debug("External skills dir could not be resolved, skipping: %s", entry)
+            continue
         if p == local_skills or p in result:
             continue
-        if p.is_dir():
+        try:
+            is_dir = p.is_dir()
+        except OSError:
+            logger.debug("External skills dir is inaccessible, skipping: %s", p)
+            continue
+        if is_dir:
             result.append(p)
         else:
             logger.debug("External skills dir does not exist, skipping: %s", p)

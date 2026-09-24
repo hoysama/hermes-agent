@@ -44,6 +44,80 @@ from tools.transcription_command import (
 
 logger = logging.getLogger(__name__)
 
+MODAL_WHISPER_URL = os.getenv("MODAL_WHISPER_URL", "https://hoysama--hermes-whisper-transcribe.modal.run")
+
+
+def _transcribe_modal(
+    file_path: str,
+    model_name: Optional[str] = None,
+    language: Optional[str] = None,
+    prompt: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Transcribe via the Modal Whisper GPU microservice (Faster-Whisper large-v3).
+
+    Sends the audio as base64-encoded bytes to the ``hermes-whisper`` Modal
+    endpoint. No API key required — this is our own service.
+    """
+    import base64
+    import json
+
+    try:
+        import requests as _requests
+    except ImportError:
+        return {
+            "success": False,
+            "transcript": "",
+            "error": "requests package is required for Modal STT provider.",
+        }
+
+    try:
+        with open(file_path, "rb") as f:
+            audio_b64 = base64.b64encode(f.read()).decode("ascii")
+    except OSError as exc:
+        return {"success": False, "transcript": "", "error": f"Cannot read audio file: {exc}"}
+
+    payload: Dict[str, Any] = {
+        "audio_url": "",
+        "audio_b64": audio_b64,
+        "task": "transcribe",
+    }
+    if language:
+        payload["language"] = language
+    if prompt:
+        payload["initial_prompt"] = prompt
+
+    try:
+        from tools.tool_backend_helpers import get_modal_auth_headers
+        resp = _requests.post(MODAL_WHISPER_URL, json=payload, headers=get_modal_auth_headers(), timeout=120)
+        if resp.status_code != 200:
+            return {
+                "success": False,
+                "transcript": "",
+                "error": f"Modal Whisper returned HTTP {resp.status_code}: {resp.text[:200]}",
+            }
+        data = resp.json()
+        if data.get("status") == "error":
+            return {
+                "success": False,
+                "transcript": "",
+                "error": f"Modal Whisper error: {data.get('message', 'unknown')}",
+            }
+        transcript = (data.get("text") or "").strip()
+        return {
+            "success": True,
+            "transcript": transcript,
+            "provider": "modal",
+            "detected_language": data.get("detected_language"),
+            "duration_seconds": data.get("duration_seconds"),
+        }
+    except Exception as exc:
+        logger.error("Modal Whisper STT failed: %s", exc)
+        return {
+            "success": False,
+            "transcript": "",
+            "error": f"Modal Whisper connection error: {exc}",
+        }
+
 
 def _resolve_provider_key(env_var: str, provider_id: str) -> str:
     """STT API key via the shared voice-key resolver (config > env/.env > credential pool); resolved per call."""
@@ -441,7 +515,8 @@ _BUILTIN_MODEL_KEYS = {
     "openai": ("openai", "model", DEFAULT_STT_MODEL, False),
     "mistral": ("mistral", "model", DEFAULT_MISTRAL_STT_MODEL, False),
     "elevenlabs": ("elevenlabs", "model_id", DEFAULT_ELEVENLABS_STT_MODEL, False),
-    "deepinfra": ("deepinfra", "model", "", True)}
+    "deepinfra": ("deepinfra", "model", "", True),
+    "modal": ("modal", "model", "large-v3", False)}
 
 
 def _builtin_model_name(provider: str, stt_config: Dict[str, Any], model: Optional[str]) -> str:

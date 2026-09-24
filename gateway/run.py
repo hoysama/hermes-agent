@@ -1053,7 +1053,9 @@ def build_resume_recovery_note(
     elif interactive:
         resume_guidance = (
             "Report to the user that the session was restored "
-            "successfully and ask what they would like to do next.")
+            "successfully and ask what they would like to do next. "
+            "If offering next steps or choices, invoke the clarify tool "
+            "so the user can choose directly with interactive buttons instead of typing.")
         tail_guidance = (
             "Do NOT re-execute old tool calls — skip any unfinished work from the conversation history."
         )

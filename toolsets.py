@@ -36,6 +36,7 @@ _HERMES_CORE_TOOLS = [
     "kanban_unblock",
     "kanban_attach", "kanban_attach_url", "kanban_attachments",
     "computer_use",
+    "cloud_mail",
     # Service-gated connector account status and authorization links.
     "manage_connections",
 ]

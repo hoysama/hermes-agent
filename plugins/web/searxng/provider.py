@@ -25,9 +25,12 @@ class SearXNGWebSearchProvider(BaseWebSearchProvider):
         base_url = provider_env("SEARXNG_URL").rstrip("/")
         if not base_url:
             return search_fail("SEARXNG_URL is not set")
+        headers = {"Accept": "application/json"}
+        from tools.tool_backend_helpers import get_modal_auth_headers
+        headers.update(get_modal_auth_headers())
         data, failure = http_get_json(
             "SearXNG", f"{base_url}/search", params={"q": query, "format": "json", "pageno": 1},
-            headers={"Accept": "application/json"}, timeout=15, logger=logger, reach_target=f"SearXNG at {base_url}",
+            headers=headers, timeout=15, logger=logger, reach_target=f"SearXNG at {base_url}",
         )
         if failure is not None:
             return failure
