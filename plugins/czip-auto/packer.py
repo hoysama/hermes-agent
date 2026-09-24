@@ -32,16 +32,16 @@ PACK_DIR_NAME = "session-packs"
 
 DEFAULTS = {
     "enabled": True,
-    "min_messages": 200,
-    "min_bytes": 512000,
+    "min_messages": 50,
+    "min_bytes": 100000,
     "cooldown_seconds": 3600,
-    "min_growth_messages": 50,
+    "min_growth_messages": 20,
     "allow_cron": False,
     # Retention: keeps the pack directory from growing without bound. ``0``
     # disables the respective cap. The newest pack always survives a pass.
-    "max_packs": 50,
-    "max_age_days": 30,
-    "max_total_bytes": 200_000_000,
+    "max_packs": 0,
+    "max_age_days": 0,
+    "max_total_bytes": 5368709120,
 }
 
 # Platforms whose sessions are never auto-packed (internal workers, unless
@@ -369,7 +369,7 @@ def prune_packs(
     return stats
 
 
-def run_pack_for_session(home: Path, session_id: str) -> Optional[Dict[str, Any]]:
+def run_pack_for_session(home: Path, session_id: str, *, force: bool = False) -> Optional[Dict[str, Any]]:
     """Load transcript (read-only) and pack it when the long-only gate passes.
 
     Returns the pack meta on success, None when skipped. Never raises — every
@@ -381,7 +381,7 @@ def run_pack_for_session(home: Path, session_id: str) -> Optional[Dict[str, Any]
             return None
         index = read_index(home)
         entry = index.get(session_id)
-        if isinstance(entry, dict):
+        if not force and isinstance(entry, dict):
             try:
                 if time.time() - float(entry.get("packed_at", 0)) < float(cfg.get("cooldown_seconds", 0)):
                     return None
@@ -397,7 +397,7 @@ def run_pack_for_session(home: Path, session_id: str) -> Optional[Dict[str, Any]
             session = db.get_session(session_id)
             if session is None:
                 return None
-            if str(session.get("source") or "").lower() == "subagent":
+            if not force and str(session.get("source") or "").lower() == "subagent":
                 # Delegated children are covered by the parent's transcript,
                 # which packs on its own growth gate. Archiving each child
                 # separately would litter one pack per delegation.
@@ -411,7 +411,7 @@ def run_pack_for_session(home: Path, session_id: str) -> Optional[Dict[str, Any]
         if not messages:
             return None
         raw_bytes = sum(len(_content_of(m)) for m in messages)
-        if not should_pack(session_id, len(messages), raw_bytes, cfg, index):
+        if not force and not should_pack(session_id, len(messages), raw_bytes, cfg, index):
             return None
         title = ""
         try:

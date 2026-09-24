@@ -218,9 +218,9 @@ def _handle_slash(raw_args: str) -> Optional[str]:
     if cmd == "pack":
         if len(argv) < 2:
             return "Usage: /czip-auto pack <session_id>"
-        meta = packer.run_pack_for_session(home, argv[1])
+        meta = packer.run_pack_for_session(home, argv[1], force=True)
         if meta is None:
-            return "Skipped (short session, cooldown, or unknown session)."
+            return "Skipped (cooldown or unknown session)."
         return f"Packed {meta['msg_count']} msgs -> {meta.get('file', '?')}."
     if cmd == "map":
         if len(argv) < 2:
