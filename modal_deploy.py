@@ -1,7 +1,10 @@
 import os
 import re
 import subprocess
-import yaml
+try:
+    import yaml
+except ImportError:
+    import hermes_yaml as yaml
 import modal
 
 APP_NAME = "hermes-api-server"
@@ -43,7 +46,7 @@ hermes_secrets = [
 
 # صورة Hermes المجهزة بـ Bun و Node.js و gh و wrangler
 hermes_image = (
-    modal.Image.debian_slim(python_version="3.11")
+    modal.Image.debian_slim(python_version="3.14")
     .apt_install(
         "git",
         "curl",
@@ -96,7 +99,7 @@ hermes_image = (
         ],
     )
     .run_commands(
-        f"pip install -e '{HERMES_ROOT}[messaging]'",
+        f"pip install -e '{HERMES_ROOT}[messaging]' pyyaml",
     )
     .run_commands(
         "pip install --no-cache-dir 'browser-use>=0.13.10,<1'",
