@@ -48,7 +48,7 @@ hermes_secrets = [
 hermes_image = (
     modal.Image.debian_slim(python_version="3.14")
     .apt_install(
-        "git",
+        "git", #git
         "curl",
         "build-essential",
         "ca-certificates",
@@ -75,7 +75,7 @@ hermes_image = (
         "apt-get install -y nodejs",
         "curl -fsSL https://bun.sh/install | bash",
         "ln -s /root/.bun/bin/bun /usr/local/bin/bun",
-        "bun upgrade",
+        "bun upgrade",  # cache-bust: 2026-09-28-force-latest-bun
         "curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg",
         'echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null',
         "apt-get update && apt-get install -y gh",
