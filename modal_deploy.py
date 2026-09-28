@@ -48,7 +48,7 @@ hermes_secrets = [
 hermes_image = (
     modal.Image.debian_slim(python_version="3.14")
     .apt_install(
-        "git", #git
+        "git",
         "curl",
         "build-essential",
         "ca-certificates",
