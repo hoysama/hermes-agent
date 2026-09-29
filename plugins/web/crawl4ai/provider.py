@@ -82,14 +82,31 @@ class Crawl4AIWebSearchProvider(WebSearchProvider):
                 data = resp.json()
                 if isinstance(data, dict) and data.get("status") == "success" and data.get("markdown"):
                     md_content = data.get("markdown", "")
-                    return {
-                        "url": url,
-                        "title": data.get("title", ""),
-                        "content": md_content,
-                        "raw_content": md_content,
-                        "metadata": {"source": "Crawl4AI Modal"},
-                        "error": None,
-                    }
+                    bot_indicators = (
+                        "blocked by anti-bot",
+                        "access denied",
+                        "attention required! | cloudflare",
+                        "just a moment...",
+                        "enable javascript",
+                        "ddos-guard",
+                    )
+                    content_lower = md_content.lower()
+                    is_suspiciously_short = len(md_content.strip()) < 150
+                    is_bot_blocked = any(ind in content_lower for ind in bot_indicators)
+
+                    if not (is_suspiciously_short or is_bot_blocked):
+                        return {
+                            "url": url,
+                            "title": data.get("title", ""),
+                            "content": md_content,
+                            "raw_content": md_content,
+                            "metadata": {"source": "Crawl4AI Modal"},
+                            "error": None,
+                        }
+                    logger.info(
+                        "Crawl4AI returned low-quality/blocked content (%d chars) for %s. Escalating to UC Browser fallback...",
+                        len(md_content), url
+                    )
         except Exception as e:
             logger.warning("Crawl4AI primary extraction failed for %s: %s. Trying UC Browser fallback...", url, e)
 

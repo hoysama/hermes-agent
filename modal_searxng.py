@@ -28,7 +28,7 @@ image = (
         "zlib1g-dev",
     )
     .run_commands(
-        "echo 'Cache bust 5 - Force pulling latest SearXNG (2026-09-28)'",
+        "echo 'Cache bust 6 - Optimize engines and timeouts (2026-09-29)'",
         "git clone https://github.com/searxng/searxng.git /usr/local/searxng",
         "cd /usr/local/searxng && pip install -r requirements.txt && pip install -e .",
         "mkdir -p /etc/searxng",
@@ -56,8 +56,8 @@ search:
     - json
 
 outgoing:
-  request_timeout: 8.0
-  max_request_timeout: 15.0
+  request_timeout: 4.0
+  max_request_timeout: 8.0
   useragent_suffix: ""
   pool_connections: 100
   pool_maxsize: 20
@@ -66,20 +66,24 @@ engines:
   - name: google
     disabled: false
     weight: 1.2
-  - name: duckduckgo
-    disabled: false
   - name: bing
     disabled: false
+    weight: 1.0
   - name: brave
     disabled: false
+    weight: 1.0
   - name: mojeek
     disabled: false
-  - name: qwant
-    disabled: false
-  - name: startpage
-    disabled: false
+    weight: 0.8
   - name: wikipedia
     disabled: false
+    weight: 0.5
+  - name: duckduckgo
+    disabled: true
+  - name: qwant
+    disabled: true
+  - name: startpage
+    disabled: true
   - name: wikidata
     disabled: true
   - name: yahoo

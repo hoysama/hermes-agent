@@ -30,7 +30,7 @@ class SearXNGWebSearchProvider(BaseWebSearchProvider):
         headers.update(get_modal_auth_headers())
         data, failure = http_get_json(
             "SearXNG", f"{base_url}/search", params={"q": query, "format": "json", "pageno": 1},
-            headers=headers, timeout=15, logger=logger, reach_target=f"SearXNG at {base_url}",
+            headers=headers, timeout=30, logger=logger, reach_target=f"SearXNG at {base_url}",
         )
         if failure is not None:
             return failure

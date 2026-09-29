@@ -197,7 +197,7 @@ def scrub_persisted_secrets() -> None:
     min_containers=1,
     max_containers=1,
     timeout=86400,
-    memory=3072,
+    memory=2560,
 )
 @modal.web_server(
     port=GATEWAY_PORT,

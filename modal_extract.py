@@ -28,7 +28,7 @@ extract_image = (
         "pydantic",
     )
     .run_commands(
-        "echo 'Cache bust 2 - Upgrade Crawl4AI upstream (2026-09-06)'",
+        "echo 'Cache bust 3 - Add SPA delay_before_return_html (2026-09-29)'",
         "python -m playwright install --with-deps chromium",
         "crawl4ai-setup",
     )
@@ -66,6 +66,7 @@ async def extract(data: dict):
     magic_enabled = data.get("magic", True)
     css_selector = data.get("css_selector", None)
     word_count_threshold = data.get("word_count_threshold", 10)
+    delay_before_return_html = data.get("delay", 2.5)
     wait_for = data.get("wait_for", None)
     js_code = data.get("js_code", None)
 
@@ -74,6 +75,7 @@ async def extract(data: dict):
         magic=magic_enabled,
         word_count_threshold=word_count_threshold,
         remove_overlay_elements=True,
+        delay_before_return_html=delay_before_return_html,
         css_selector=css_selector,
         wait_for=wait_for,
         js_code=js_code,
