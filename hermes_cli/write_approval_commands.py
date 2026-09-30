@@ -22,13 +22,42 @@ def _fmt_pending_list(subsystem: str) -> str:
     for r in records:
         origin = r.get("origin", "foreground")
         tag = " [auto]" if origin == "background_review" else ""
-        lines.append(f"  {r['id']}{tag}  {r.get('summary', '')}")
         if subsystem == wa.MEMORY:
-            lines.extend(f"      {line}" for line in _matched_entries(r["payload"]))
+            payload = r.get("payload", {})
+            target = payload.get("target", "memory")
+            target_badge = "USER.md" if target == "user" else "MEMORY.md"
+            lines.append(f"\n  📌 [{r['id']}]{tag} [{target_badge}]:")
+            ops = payload.get("operations") if payload.get("action") == "batch" else [payload]
+            for op in ops:
+                if not isinstance(op, dict):
+                    continue
+                act = op.get("action", "?")
+                content = op.get("content") or op.get("new_text") or ""
+                snippet = (content[:90] + "...") if len(content) > 90 else content
+                old = op.get("old_text") or ""
+                matched = op.get("matched_entry")
+                if act == "replace":
+                    lines.append(f"    • 🔄 replace (matching '{old[:40]}'):")
+                    if matched:
+                        lines.append(f"        replaces entry: {matched}")
+                    else:
+                        lines.append(f"        replace: unpinned legacy target — reject and recreate before approving")
+                    if snippet:
+                        lines.append(f"        -> new text: {snippet}")
+                elif act == "remove":
+                    lines.append(f"    • 🗑️ remove (matching '{old[:40]}'):")
+                    if matched:
+                        lines.append(f"        removes entry: {matched}")
+                    else:
+                        lines.append(f"        remove: unpinned legacy target — reject and recreate before approving")
+                elif act == "add":
+                    lines.append(f"    • ➕ add: {snippet}")
+                else:
+                    lines.append(f"    • {act}: {snippet}")
+        else:
+            lines.append(f"  {r['id']}{tag}  {r.get('summary', '')}")
     lines.append("")
-    lines.append(f"Apply: /{subsystem} approve <id>   Reject: /{subsystem} reject <id>")
-    if subsystem == wa.SKILLS:
-        lines.append("Review full diff: /skills diff <id>")
+    lines.append(f"Apply: /{subsystem} approve <id>   Reject: /{subsystem} reject <id>   Diff: /{subsystem} diff <id>")
     return "\n".join(lines)
 
 
@@ -50,8 +79,8 @@ def handle_pending_subcommand(
         return _approve(subsystem, rest, memory_store)
     if sub in {"reject", "deny", "drop"}:
         return _reject(subsystem, rest)
-    if sub == "diff" and subsystem == wa.SKILLS:
-        return _diff(rest)
+    if sub == "diff":
+        return _diff(subsystem, rest)
     if sub in {"approval", "mode"}:  # 'mode' kept as a back-compat alias
         return _set_approval(subsystem, rest, set_mode_fn)
     return None  # not ours — caller handles
@@ -148,13 +177,16 @@ def _reject(subsystem: str, rest: List[str]) -> str:
     return f"No pending {subsystem} write with id '{target}'."
 
 
-def _diff(rest: List[str]) -> str:
+def _diff(subsystem: str, rest: List[str]) -> str:
     if not rest:
-        return "Usage: /skills diff <id>"
-    rec = wa.get_pending(wa.SKILLS, rest[0])
+        return f"Usage: /{subsystem} diff <id>"
+    rec = wa.get_pending(subsystem, rest[0])
     if not rec:
-        return f"No pending skill write with id '{rest[0]}'."
-    return f"# Pending skill write {rec['id']}: {rec.get('summary', '')}\n\n" + wa.skill_pending_diff(rec)
+        return f"No pending {subsystem} write with id '{rest[0]}'."
+    if subsystem == wa.SKILLS:
+        return f"# Pending skill write {rec['id']}: {rec.get('summary', '')}\n\n" + wa.skill_pending_diff(rec)
+    return f"# Pending memory write {rec['id']}: {rec.get('summary', '')}\n\n" + wa.memory_pending_diff(rec)
+
 
 
 _APPROVAL_VALUES = {

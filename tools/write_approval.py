@@ -282,3 +282,32 @@ def skill_pending_diff(record: Dict[str, Any]) -> str:
     diff = difflib.unified_diff(current.splitlines(keepends=True), new.splitlines(keepends=True),
                                 fromfile=f"a/{target_label}", tofile=f"b/{target_label}")
     return "".join(diff) or "(no textual change)"
+
+
+def memory_pending_diff(record: Dict[str, Any]) -> str:
+    """Full detail or before/after diff of a staged memory write, single or batch."""
+    payload = record.get("payload", {})
+    target = payload.get("target", "memory")
+    target_label = "USER.md" if target == "user" else "MEMORY.md"
+    ops = payload.get("operations") if payload.get("action") == "batch" else [payload]
+
+    sections = [f"Target: {target_label} ({len(ops)} operation{'s' if len(ops) > 1 else ''})\n"]
+    for i, op in enumerate(ops, 1):
+        if not isinstance(op, dict):
+            continue
+        act = op.get("action", "?")
+        prefix = f"[{i}] " if len(ops) > 1 else ""
+        if act == "add":
+            content = op.get("content") or op.get("new_text") or ""
+            sections.append(f"{prefix}➕ Add:\n{content}\n")
+        elif act == "replace":
+            old = op.get("matched_entry") or op.get("old_text") or ""
+            new = op.get("content") or op.get("new_text") or ""
+            sections.append(f"{prefix}🔄 Replace:\n- Old: {old}\n+ New: {new}\n")
+        elif act == "remove":
+            old = op.get("matched_entry") or op.get("old_text") or ""
+            sections.append(f"{prefix}🗑️ Remove:\n- {old}\n")
+        else:
+            sections.append(f"{prefix}? {act}: {op}\n")
+    return "\n".join(sections).strip()
+

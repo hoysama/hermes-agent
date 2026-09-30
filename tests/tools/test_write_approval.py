@@ -327,3 +327,36 @@ def test_memory_invalid_params_rejected_before_staging(hermes_home):
     r = json.loads(memory_tool("add", "memory", None, store=store))
     assert r["success"] is False
     assert wa.pending_count("memory") == 0
+
+
+def test_handle_memory_diff(hermes_home):
+    from hermes_cli.write_approval_commands import handle_pending_subcommand
+    from tools import write_approval as wa
+    rec = wa.stage_write("memory", {
+        "action": "batch",
+        "target": "memory",
+        "operations": [
+            {"action": "replace", "old_text": "old note", "matched_entry": "old note full", "content": "new note full"},
+            {"action": "remove", "old_text": "remove note", "matched_entry": "remove note full"},
+            {"action": "add", "content": "add note full"},
+        ]
+    }, summary="test batch", origin="background_review")
+    pid = rec["id"]
+
+    # Usage when no ID provided
+    assert "Usage: /memory diff <id>" in handle_pending_subcommand(wa.MEMORY, ["diff"])
+
+    # Detailed diff
+    diff_out = handle_pending_subcommand(wa.MEMORY, ["diff", pid])
+    assert f"Pending memory write {pid}" in diff_out
+    assert "Target: MEMORY.md" in diff_out
+    assert "🔄 Replace" in diff_out and "old note full" in diff_out and "new note full" in diff_out
+    assert "🗑️ Remove" in diff_out and "remove note full" in diff_out
+    assert "➕ Add" in diff_out and "add note full" in diff_out
+
+    # Pending list formatting contains the ID, operations, and diff instruction
+    pending_list = handle_pending_subcommand(wa.MEMORY, ["pending"])
+    assert pid in pending_list
+    assert "[MEMORY.md]" in pending_list
+    assert "Diff: /memory diff <id>" in pending_list
+
