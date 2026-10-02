@@ -26,34 +26,36 @@ def _fmt_pending_list(subsystem: str) -> str:
             payload = r.get("payload", {})
             target = payload.get("target", "memory")
             target_badge = "USER.md" if target == "user" else "MEMORY.md"
-            lines.append(f"\n  📌 [{r['id']}]{tag} [{target_badge}]:")
+            summary = wa.clean_compression_markers(r.get("summary", ""))
+            summary_part = f": {summary}" if summary else ""
+            lines.append(f"\n  📌 [{r['id']}]{tag} [{target_badge}]{summary_part}:")
             ops = payload.get("operations") if payload.get("action") == "batch" else [payload]
             for op in ops:
                 if not isinstance(op, dict):
                     continue
                 act = op.get("action", "?")
-                content = op.get("content") or op.get("new_text") or ""
+                content = wa.clean_compression_markers(op.get("content") or op.get("new_text") or "")
                 snippet = (content[:90] + "...") if len(content) > 90 else content
-                old = op.get("old_text") or ""
-                matched = op.get("matched_entry")
+                old = wa.clean_compression_markers(op.get("old_text") or "")
+                matched = wa.clean_compression_markers(op.get("matched_entry") or "")
                 if act == "replace":
-                    lines.append(f"    • 🔄 replace (matching '{old[:40]}'):")
+                    lines.append(wa.bidi_line(f"matching '{old[:40]}'", prefix="    • 🔄 replace (") + "):")
                     if matched:
-                        lines.append(f"        replaces entry: {matched}")
+                        lines.append(wa.bidi_line(matched, prefix="        replaces entry: "))
                     else:
-                        lines.append(f"        replace: unpinned legacy target — reject and recreate before approving")
+                        lines.append("        replace: unpinned legacy target — reject and recreate before approving")
                     if snippet:
-                        lines.append(f"        -> new text: {snippet}")
+                        lines.append(wa.bidi_line(snippet, prefix="        -> new text: "))
                 elif act == "remove":
-                    lines.append(f"    • 🗑️ remove (matching '{old[:40]}'):")
+                    lines.append(wa.bidi_line(f"matching '{old[:40]}'", prefix="    • 🗑️ remove (") + "):")
                     if matched:
-                        lines.append(f"        removes entry: {matched}")
+                        lines.append(wa.bidi_line(matched, prefix="        removes entry: "))
                     else:
-                        lines.append(f"        remove: unpinned legacy target — reject and recreate before approving")
+                        lines.append("        remove: unpinned legacy target — reject and recreate before approving")
                 elif act == "add":
-                    lines.append(f"    • ➕ add: {snippet}")
+                    lines.append(wa.bidi_line(snippet, prefix="    • ➕ add: "))
                 else:
-                    lines.append(f"    • {act}: {snippet}")
+                    lines.append(wa.bidi_line(snippet, prefix=f"    • {act}: "))
         else:
             lines.append(f"  {r['id']}{tag}  {r.get('summary', '')}")
     lines.append("")
@@ -111,8 +113,8 @@ def _approve(subsystem: str, rest: List[str], memory_store) -> str:
         if ok:
             wa.discard_pending(subsystem, rec["id"])
             applied += 1
-            overwritten.extend(f"  {rec['id']}: {text}" for text in _changed_entries(result, "replaced"))
-            removed.extend(f"  {rec['id']}: {text}" for text in _changed_entries(result, "removed"))
+            overwritten.extend(wa.bidi_line(text, prefix=f"  {rec['id']}: ") for text in _changed_entries(result, "replaced"))
+            removed.extend(wa.bidi_line(text, prefix=f"  {rec['id']}: ") for text in _changed_entries(result, "removed"))
         else:
             failed.append(f"{rec['id']}: {msg}")
 
@@ -185,7 +187,11 @@ def _diff(subsystem: str, rest: List[str]) -> str:
         return f"No pending {subsystem} write with id '{rest[0]}'."
     if subsystem == wa.SKILLS:
         return f"# Pending skill write {rec['id']}: {rec.get('summary', '')}\n\n" + wa.skill_pending_diff(rec)
-    return f"# Pending memory write {rec['id']}: {rec.get('summary', '')}\n\n" + wa.memory_pending_diff(rec)
+    summary = wa.clean_compression_markers(rec.get("summary", ""))
+    header = f"# Pending memory write {rec['id']}: {summary}" if summary else f"# Pending memory write {rec['id']}"
+    if wa.has_rtl(header):
+        header = f"{wa.RLM}{header}"
+    return f"{header}\n\n" + wa.memory_pending_diff(rec)
 
 
 

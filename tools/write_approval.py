@@ -37,6 +37,41 @@ _SUBSYSTEMS = (MEMORY, SKILLS)
 CONFIG_KEY = "write_approval"
 _TRUTHY_STRINGS = frozenset({"on", "true", "yes", "1", "approve", "enabled"})
 
+# Unicode BiDi controls and patterns
+RLM = "\u200F"  # Right-to-Left Mark (strong RTL)
+LRM = "\u200E"  # Left-to-Right Mark (strong LTR)
+_RTL_RE = re.compile(r"[\u0591-\u07FF\uFB1D-\uFDFD\uFE70-\uFEFC]")
+_COMPRESSION_MARKER_RE = re.compile(r"⟪HERMES-CONTEXT-COMPRESSION:[^⟫]*⟫")
+
+
+def has_rtl(text: str) -> bool:
+    """Return True if text contains Right-to-Left characters (Arabic, Hebrew, Persian, etc.)."""
+    return bool(_RTL_RE.search(text)) if text else False
+
+
+def clean_compression_markers(text: str) -> str:
+    """Strip leaked context-compression markers from display strings."""
+    if not text:
+        return ""
+    return _COMPRESSION_MARKER_RE.sub("", text).strip()
+
+
+def bidi_line(text: str, prefix: str = "", *, force_rtl: Optional[bool] = None) -> str:
+    """Format a line with proper Unicode BiDi base direction.
+
+    If text contains RTL script (or force_rtl=True), prepends RLM (\\u200F) so that
+    chat platforms (Telegram, Slack, etc.) and terminals evaluate the paragraph
+    direction as RTL, preventing punctuation flips, swapped brackets, and scrambled
+    order between Latin technical terms and Arabic sentences.
+    """
+    cleaned = clean_compression_markers(text).lstrip(RLM)
+    is_rtl = force_rtl if force_rtl is not None else has_rtl(cleaned)
+    if is_rtl:
+        if prefix:
+            return f"{RLM}{prefix}{RLM}{cleaned}"
+        return f"{RLM}{cleaned}"
+    return f"{prefix}{cleaned}"
+
 
 # --- Config resolution ---
 
@@ -298,15 +333,31 @@ def memory_pending_diff(record: Dict[str, Any]) -> str:
         act = op.get("action", "?")
         prefix = f"[{i}] " if len(ops) > 1 else ""
         if act == "add":
-            content = op.get("content") or op.get("new_text") or ""
-            sections.append(f"{prefix}➕ Add:\n{content}\n")
+            content = clean_compression_markers(op.get("content") or op.get("new_text") or "")
+            if has_rtl(content):
+                content_lines = "\n".join(bidi_line(line) for line in content.splitlines())
+                sections.append(f"{RLM}{prefix}➕ Add:\n{content_lines}\n")
+            else:
+                sections.append(f"{prefix}➕ Add:\n{content}\n")
         elif act == "replace":
-            old = op.get("matched_entry") or op.get("old_text") or ""
-            new = op.get("content") or op.get("new_text") or ""
-            sections.append(f"{prefix}🔄 Replace:\n- Old: {old}\n+ New: {new}\n")
+            old = clean_compression_markers(op.get("matched_entry") or op.get("old_text") or "")
+            new = clean_compression_markers(op.get("content") or op.get("new_text") or "")
+            if has_rtl(old) or has_rtl(new):
+                sections.append(
+                    f"{RLM}{prefix}🔄 Replace:\n"
+                    f"{bidi_line(old, prefix='- Old: ')}\n"
+                    f"{bidi_line(new, prefix='+ New: ')}\n"
+                )
+            else:
+                sections.append(f"{prefix}🔄 Replace:\n- Old: {old}\n+ New: {new}\n")
         elif act == "remove":
-            old = op.get("matched_entry") or op.get("old_text") or ""
-            sections.append(f"{prefix}🗑️ Remove:\n- {old}\n")
+            old = clean_compression_markers(op.get("matched_entry") or op.get("old_text") or "")
+            if has_rtl(old):
+                b_prefix = "- " if not old.startswith("- ") else ""
+                sections.append(f"{RLM}{prefix}🗑️ Remove:\n{bidi_line(old, prefix=b_prefix)}\n")
+            else:
+                b_prefix = "- " if not old.startswith("- ") else ""
+                sections.append(f"{prefix}🗑️ Remove:\n{b_prefix}{old}\n")
         else:
             sections.append(f"{prefix}? {act}: {op}\n")
     return "\n".join(sections).strip()

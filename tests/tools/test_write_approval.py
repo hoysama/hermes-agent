@@ -360,3 +360,84 @@ def test_handle_memory_diff(hermes_home):
     assert "[MEMORY.md]" in pending_list
     assert "Diff: /memory diff <id>" in pending_list
 
+
+def test_bidi_helpers():
+    from tools import write_approval as wa
+
+    # RTL detection
+    assert wa.has_rtl("مرحبا بالعالم") is True
+    assert wa.has_rtl("שלום") is True
+    assert wa.has_rtl("Hello world 123") is False
+    assert wa.has_rtl("") is False
+    assert wa.has_rtl(None) is False
+
+    # Compression marker sanitization
+    raw = "سوق المواشي ⟪HERMES-CONTEXT-COMPRESSION: 1,388 of 1,588 chars omitted here by Hermes's context compressor. This is NOT part of the original tool call and must never be reproduced in new output — always write full, untruncated content.⟫ على الإنتاج"
+    cleaned = wa.clean_compression_markers(raw)
+    assert "HERMES-CONTEXT-COMPRESSION" not in cleaned
+    assert "سوق المواشي" in cleaned and "على الإنتاج" in cleaned
+
+    # bidi_line formatting
+    eng = wa.bidi_line("Plain English", prefix="    • ➕ add: ")
+    assert eng == "    • ➕ add: Plain English"
+    assert wa.RLM not in eng
+
+    ar = wa.bidi_line("ملاحظة عربية", prefix="    • ➕ add: ")
+    assert ar.startswith(wa.RLM)
+    assert f"{wa.RLM}    • ➕ add: {wa.RLM}ملاحظة عربية" == ar
+
+
+def test_handle_memory_diff_and_pending_bidi_rtl(hermes_home):
+    """Memory approval commands must render RTL/Arabic lines with RLM prefixes
+    and sanitize any leaked context-compression markers (#BiDi)."""
+    from hermes_cli.write_approval_commands import handle_pending_subcommand
+    from tools import write_approval as wa
+    from tools.memory_tool import MemoryStore
+
+    compression_leak = " ⟪HERMES-CONTEXT-COMPRESSION: 50 of 100 chars omitted here.⟫"
+    arabic_old = "- المشروع القديم: سوق المواشي" + compression_leak
+    arabic_new = "- المشروع الحديث: سوق المواشي المنشور"
+    arabic_summary = "تحديث ذاكرة سوق المواشي"
+
+    rec = wa.stage_write("memory", {
+        "action": "batch",
+        "target": "memory",
+        "operations": [
+            {"action": "replace", "old_text": "المشروع القديم", "matched_entry": arabic_old, "content": arabic_new},
+            {"action": "remove", "old_text": "درس wrangler", "matched_entry": "- درس wrangler (فِكرة)"},
+            {"action": "add", "content": "«فِكرة» (٢٠٢٦-٠٩-٣٠): اشتراكات SaaS"},
+        ]
+    }, summary=arabic_summary, origin="background_review")
+    pid = rec["id"]
+
+    # 1. Diff rendering
+    diff_out = handle_pending_subcommand(wa.MEMORY, ["diff", pid])
+    assert f"Pending memory write {pid}" in diff_out
+    assert "HERMES-CONTEXT-COMPRESSION" not in diff_out
+    # Lines with Arabic script must carry RLM (\u200F)
+    assert f"{wa.RLM}# Pending memory write" in diff_out
+    assert f"{wa.RLM}[1] 🔄 Replace:" in diff_out
+    assert f"{wa.RLM}- Old: {wa.RLM}" in diff_out
+    assert f"{wa.RLM}+ New: {wa.RLM}" in diff_out
+    assert f"{wa.RLM}[2] 🗑️ Remove:" in diff_out
+    assert f"{wa.RLM}[3] ➕ Add:" in diff_out
+
+    # 2. Pending list rendering
+    pending_list = handle_pending_subcommand(wa.MEMORY, ["pending"])
+    assert pid in pending_list
+    assert arabic_summary in pending_list
+    assert "HERMES-CONTEXT-COMPRESSION" not in pending_list
+    assert f"{wa.RLM}    • 🔄 replace" in pending_list
+    assert f"{wa.RLM}        replaces entry: {wa.RLM}" in pending_list
+
+    # 3. Approve rendering
+    store = MemoryStore()
+    store.load_from_disk()
+    store.add("memory", arabic_old)
+    store.add("memory", "- درس wrangler (فِكرة)")
+    approve_out = handle_pending_subcommand(wa.MEMORY, ["approve", pid], memory_store=store)
+    assert "Approved 1 memory write(s)." in approve_out
+    assert "Overwrote entire entry" in approve_out
+    assert "Removed entry" in approve_out
+    assert "HERMES-CONTEXT-COMPRESSION" not in approve_out
+
