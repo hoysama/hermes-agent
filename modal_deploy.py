@@ -42,6 +42,7 @@ hermes_secrets = [
     modal.Secret.from_name("hermes-cloud-mail"),
     modal.Secret.from_name("linear"),
     modal.Secret.from_name("ci-github"),
+    modal.Secret.from_name("Instagram"),
 ]
 
 # صورة Hermes المجهزة بـ Bun و Node.js و gh و wrangler
