@@ -336,7 +336,7 @@ def memory_pending_diff(record: Dict[str, Any]) -> str:
             content = clean_compression_markers(op.get("content") or op.get("new_text") or "")
             if has_rtl(content):
                 content_lines = "\n".join(bidi_line(line) for line in content.splitlines())
-                sections.append(f"{RLM}{prefix}➕ Add:\n{content_lines}\n")
+                sections.append(f"{RLM}{prefix}➕ إضافة (Add):\n{content_lines}\n")
             else:
                 sections.append(f"{prefix}➕ Add:\n{content}\n")
         elif act == "replace":
@@ -344,9 +344,9 @@ def memory_pending_diff(record: Dict[str, Any]) -> str:
             new = clean_compression_markers(op.get("content") or op.get("new_text") or "")
             if has_rtl(old) or has_rtl(new):
                 sections.append(
-                    f"{RLM}{prefix}🔄 Replace:\n"
-                    f"{bidi_line(old, prefix='- Old: ')}\n"
-                    f"{bidi_line(new, prefix='+ New: ')}\n"
+                    f"{RLM}{prefix}🔄 استبدال (Replace):\n"
+                    f"{RLM}- السابق (Old): {old}\n"
+                    f"{RLM}+ الجديد (New): {new}\n"
                 )
             else:
                 sections.append(f"{prefix}🔄 Replace:\n- Old: {old}\n+ New: {new}\n")
@@ -354,7 +354,7 @@ def memory_pending_diff(record: Dict[str, Any]) -> str:
             old = clean_compression_markers(op.get("matched_entry") or op.get("old_text") or "")
             if has_rtl(old):
                 b_prefix = "- " if not old.startswith("- ") else ""
-                sections.append(f"{RLM}{prefix}🗑️ Remove:\n{bidi_line(old, prefix=b_prefix)}\n")
+                sections.append(f"{RLM}{prefix}🗑️ حذف (Remove):\n{RLM}{b_prefix}{old}\n")
             else:
                 b_prefix = "- " if not old.startswith("- ") else ""
                 sections.append(f"{prefix}🗑️ Remove:\n{b_prefix}{old}\n")

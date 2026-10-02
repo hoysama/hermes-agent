@@ -11,14 +11,17 @@ from tools import write_approval as wa
 
 def _fmt_state(subsystem: str) -> str:
     on = wa.write_approval_enabled(subsystem)
-    return f"{subsystem}.write_approval = {'on' if on else 'off'}"
+    ar_name = "الذاكرة" if subsystem == wa.MEMORY else "المهارات"
+    ar_status = "✅ مفعلة (on)" if on else "❌ معطلة (off)"
+    return f"حالة الموافقة على كتابة {ar_name}: {ar_status} | {subsystem}.write_approval = {'on' if on else 'off'}"
 
 
 def _fmt_pending_list(subsystem: str) -> str:
     records = wa.list_pending(subsystem)
+    ar_name = "الذاكرة" if subsystem == wa.MEMORY else "المهارات"
     if not records:
-        return f"No pending {subsystem} writes."
-    lines = [f"Pending {subsystem} writes ({len(records)}):"]
+        return f"لا توجد عمليات معلقة في {ar_name} (No pending {subsystem} writes)."
+    lines = [f"طلبات كتابة {ar_name} المعلقة (Pending {subsystem} writes: {len(records)}):"]
     for r in records:
         origin = r.get("origin", "foreground")
         tag = " [auto]" if origin == "background_review" else ""
@@ -26,9 +29,13 @@ def _fmt_pending_list(subsystem: str) -> str:
             payload = r.get("payload", {})
             target = payload.get("target", "memory")
             target_badge = "USER.md" if target == "user" else "MEMORY.md"
-            summary = wa.clean_compression_markers(r.get("summary", ""))
+            raw_summary = wa.clean_compression_markers(r.get("summary", ""))
+            if raw_summary.startswith("background review consolidation"):
+                summary = f"مراجعة دورية وتوحيد للذاكرة ({raw_summary})"
+            else:
+                summary = raw_summary
             summary_part = f": {summary}" if summary else ""
-            lines.append(f"\n  📌 [{r['id']}]{tag} [{target_badge}]{summary_part}:")
+            lines.append(f"\n{wa.RLM}  📌 [{r['id']}]{tag} [{target_badge}]{summary_part}:")
             ops = payload.get("operations") if payload.get("action") == "batch" else [payload]
             for op in ops:
                 if not isinstance(op, dict):
@@ -38,28 +45,50 @@ def _fmt_pending_list(subsystem: str) -> str:
                 snippet = (content[:90] + "...") if len(content) > 90 else content
                 old = wa.clean_compression_markers(op.get("old_text") or "")
                 matched = wa.clean_compression_markers(op.get("matched_entry") or "")
-                if act == "replace":
-                    lines.append(wa.bidi_line(f"matching '{old[:40]}'", prefix="    • 🔄 replace (") + "):")
-                    if matched:
-                        lines.append(wa.bidi_line(matched, prefix="        replaces entry: "))
+                is_rtl = wa.has_rtl(old) or wa.has_rtl(matched) or wa.has_rtl(content)
+
+                if is_rtl:
+                    if act == "replace":
+                        lines.append(f"{wa.RLM}    • 🔄 استبدال (المطابق لـ '{old[:40]}'):")
+                        if matched:
+                            lines.append(f"{wa.RLM}        المدخل الحالي: {matched}")
+                        else:
+                            lines.append(f"{wa.RLM}        استبدال: هدف قديم غير مثبت — ارفضه وأعد إنشاءه قبل الموافقة (unpinned legacy target)")
+                        if snippet:
+                            lines.append(f"{wa.RLM}        ← النص الجديد: {snippet}")
+                    elif act == "remove":
+                        lines.append(f"{wa.RLM}    • 🗑️ حذف (المطابق لـ '{old[:40]}'):")
+                        if matched:
+                            lines.append(f"{wa.RLM}        المدخل الحالي: {matched}")
+                        else:
+                            lines.append(f"{wa.RLM}        حذف: هدف قديم غير مثبت — ارفضه وأعد إنشاءه قبل الموافقة (unpinned legacy target)")
+                    elif act == "add":
+                        lines.append(f"{wa.RLM}    • ➕ إضافة: {snippet}")
                     else:
-                        lines.append("        replace: unpinned legacy target — reject and recreate before approving")
-                    if snippet:
-                        lines.append(wa.bidi_line(snippet, prefix="        -> new text: "))
-                elif act == "remove":
-                    lines.append(wa.bidi_line(f"matching '{old[:40]}'", prefix="    • 🗑️ remove (") + "):")
-                    if matched:
-                        lines.append(wa.bidi_line(matched, prefix="        removes entry: "))
-                    else:
-                        lines.append("        remove: unpinned legacy target — reject and recreate before approving")
-                elif act == "add":
-                    lines.append(wa.bidi_line(snippet, prefix="    • ➕ add: "))
+                        lines.append(f"{wa.RLM}    • {act}: {snippet}")
                 else:
-                    lines.append(wa.bidi_line(snippet, prefix=f"    • {act}: "))
+                    if act == "replace":
+                        lines.append(f"    • 🔄 replace (matching '{old[:40]}'):")
+                        if matched:
+                            lines.append(f"        replaces entry: {matched}")
+                        else:
+                            lines.append("        replace: unpinned legacy target — reject and recreate before approving")
+                        if snippet:
+                            lines.append(f"        -> new text: {snippet}")
+                    elif act == "remove":
+                        lines.append(f"    • 🗑️ remove (matching '{old[:40]}'):")
+                        if matched:
+                            lines.append(f"        removes entry: {matched}")
+                        else:
+                            lines.append("        remove: unpinned legacy target — reject and recreate before approving")
+                    elif act == "add":
+                        lines.append(f"    • ➕ add: {snippet}")
+                    else:
+                        lines.append(f"    • {act}: {snippet}")
         else:
             lines.append(f"  {r['id']}{tag}  {r.get('summary', '')}")
     lines.append("")
-    lines.append(f"Apply: /{subsystem} approve <id>   Reject: /{subsystem} reject <id>   Diff: /{subsystem} diff <id>")
+    lines.append(f"للتطبيق: /{subsystem} approve <id>   للرفض: /{subsystem} reject <id>   للتفاصيل: /{subsystem} diff <id> (Diff: /{subsystem} diff <id>)")
     return "\n".join(lines)
 
 

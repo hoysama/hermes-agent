@@ -416,19 +416,19 @@ def test_handle_memory_diff_and_pending_bidi_rtl(hermes_home):
     assert "HERMES-CONTEXT-COMPRESSION" not in diff_out
     # Lines with Arabic script must carry RLM (\u200F)
     assert f"{wa.RLM}# Pending memory write" in diff_out
-    assert f"{wa.RLM}[1] 🔄 Replace:" in diff_out
-    assert f"{wa.RLM}- Old: {wa.RLM}" in diff_out
-    assert f"{wa.RLM}+ New: {wa.RLM}" in diff_out
-    assert f"{wa.RLM}[2] 🗑️ Remove:" in diff_out
-    assert f"{wa.RLM}[3] ➕ Add:" in diff_out
+    assert f"{wa.RLM}[1] 🔄 استبدال (Replace):" in diff_out
+    assert f"{wa.RLM}- السابق (Old):" in diff_out
+    assert f"{wa.RLM}+ الجديد (New):" in diff_out
+    assert f"{wa.RLM}[2] 🗑️ حذف (Remove):" in diff_out
+    assert f"{wa.RLM}[3] ➕ إضافة (Add):" in diff_out
 
     # 2. Pending list rendering
     pending_list = handle_pending_subcommand(wa.MEMORY, ["pending"])
     assert pid in pending_list
     assert arabic_summary in pending_list
     assert "HERMES-CONTEXT-COMPRESSION" not in pending_list
-    assert f"{wa.RLM}    • 🔄 replace" in pending_list
-    assert f"{wa.RLM}        replaces entry: {wa.RLM}" in pending_list
+    assert f"{wa.RLM}    • 🔄 استبدال" in pending_list
+    assert f"{wa.RLM}        المدخل الحالي: " in pending_list
 
     # 3. Approve rendering
     store = MemoryStore()
