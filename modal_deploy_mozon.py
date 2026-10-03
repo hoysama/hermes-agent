@@ -75,6 +75,9 @@ hermes_image = (
         "apt-get update && apt-get install -y gh",
         "bun add -g wrangler@latest",
         "ln -s /root/.bun/bin/wrangler /usr/local/bin/wrangler",
+        'export BUN_INSTALL="$HOME/.bun" && export PATH="$BUN_INSTALL/bin:$PATH" && bun i -g agent-browser@latest',
+        "ln -s /root/.bun/bin/agent-browser /usr/local/bin/agent-browser || true",
+        "agent-browser install",
     )
     .add_local_dir(
         ".",
@@ -91,6 +94,10 @@ hermes_image = (
     )
     .run_commands(
         f"pip install -e '{HERMES_ROOT}[messaging]' pyyaml ruamel.yaml",
+    )
+    .run_commands(
+        "pip install --no-cache-dir 'browser-use>=0.13.10,<1'",
+        "browser-use install",
     )
 )
 
@@ -150,6 +157,9 @@ def build_runtime_environment() -> dict[str, str]:
                 os.fsync(handle.fileno())
             os.replace(temporary_path, config_path)
             os.chmod(config_path, 0o600)
+
+    env["BROWSER_USE_HEADLESS"] = "true"
+    env["AGENT_BROWSER_ARGS"] = "--no-sandbox,--disable-dev-shm-usage"
 
     return env
 
