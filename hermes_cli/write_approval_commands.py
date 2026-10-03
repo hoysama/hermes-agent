@@ -13,7 +13,14 @@ def _fmt_state(subsystem: str) -> str:
     on = wa.write_approval_enabled(subsystem)
     ar_name = "الذاكرة" if subsystem == wa.MEMORY else "المهارات"
     ar_status = "✅ مفعلة (on)" if on else "❌ معطلة (off)"
-    return f"حالة الموافقة على كتابة {ar_name}: {ar_status} | {subsystem}.write_approval = {'on' if on else 'off'}"
+    lines = [f"حالة الموافقة على كتابة {ar_name}: {ar_status} | {subsystem}.write_approval = {'on' if on else 'off'}"]
+    if subsystem == wa.MEMORY:
+        from tools.memory_tool import get_builtin_memory_config
+        from utils import is_truthy_value
+        auto_cons = is_truthy_value(get_builtin_memory_config().get("auto_consolidate"), default=False)
+        auto_status = "✅ مفعل (on)" if auto_cons else "❌ معطل (off)"
+        lines.append(f"التوحيد الذاتي للذاكرة (Auto-consolidate): {auto_status} | memory.auto_consolidate = {'on' if auto_cons else 'off'}")
+    return "\n".join(lines)
 
 
 def _fmt_pending_list(subsystem: str) -> str:
@@ -114,6 +121,8 @@ def handle_pending_subcommand(
         return _diff(subsystem, rest)
     if sub in {"approval", "mode"}:  # 'mode' kept as a back-compat alias
         return _set_approval(subsystem, rest, set_mode_fn)
+    if sub in {"auto_consolidate", "auto-consolidate", "consolidate"}:
+        return _set_auto_consolidate(subsystem, rest)
     return None  # not ours — caller handles
 
 
@@ -247,3 +256,31 @@ def _set_approval(subsystem: str, rest: List[str], set_mode_fn) -> str:
     except Exception as e:
         return f"Failed to set {subsystem}.write_approval: {e}"
     return f"{subsystem}.write_approval set to '{'on' if enabled else 'off'}'."
+
+
+def _set_auto_consolidate(subsystem: str, rest: List[str]) -> str:
+    """Turn autonomous background review consolidation on/off for memory."""
+    if subsystem != wa.MEMORY:
+        return f"Auto-consolidate is only applicable to {wa.MEMORY}."
+    from tools.memory_tool import get_builtin_memory_config
+    from utils import is_truthy_value
+    if not rest:
+        auto_cons = is_truthy_value(get_builtin_memory_config().get("auto_consolidate"), default=False)
+        ar_status = "✅ مفعل (on)" if auto_cons else "❌ معطل (off)"
+        return (f"التوحيد الذاتي للذاكرة (Auto-consolidate): {ar_status} | memory.auto_consolidate = {'on' if auto_cons else 'off'}\n"
+                f"Set with: /memory auto_consolidate <on|off>")
+    arg = rest[0].strip().lower()
+    enabled = _APPROVAL_VALUES.get(arg)
+    if enabled is None:
+        return f"Invalid value '{arg}'. Use: on or off."
+    try:
+        from hermes_cli.config import read_user_config_raw, atomic_config_write
+        from hermes_constants import get_hermes_home
+        config_path = get_hermes_home() / "config.yaml"
+        user_config = read_user_config_raw(config_path)
+        user_config.setdefault("memory", {})["auto_consolidate"] = bool(enabled)
+        atomic_config_write(config_path, user_config)
+    except Exception as e:
+        return f"Failed to set memory.auto_consolidate: {e}"
+    return f"memory.auto_consolidate set to '{'on' if enabled else 'off'}'."
+

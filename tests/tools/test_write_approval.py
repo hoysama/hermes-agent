@@ -491,3 +491,30 @@ def test_staged_hint_keeps_command_for_chat_gateway_platform(hermes_home, monkey
     monkeypatch.setenv("HERMES_SESSION_PLATFORM", "telegram")
     r = _stage_one_memory_write()
     assert "/memory pending" in r["message"], r["message"]
+
+
+def test_auto_consolidate_subcommand(hermes_home):
+    from hermes_cli.write_approval_commands import handle_pending_subcommand
+    from tools import write_approval as wa
+    from tools.memory_tool import get_builtin_memory_config
+
+    # Default / status query
+    status = handle_pending_subcommand(wa.MEMORY, ["auto_consolidate"])
+    assert "التوحيد الذاتي للذاكرة" in status
+    assert "memory.auto_consolidate = off" in status
+
+    # Toggle on
+    turn_on = handle_pending_subcommand(wa.MEMORY, ["auto_consolidate", "on"])
+    assert "memory.auto_consolidate set to 'on'" in turn_on
+    assert get_builtin_memory_config().get("auto_consolidate") is True
+
+    # Check status again
+    status2 = handle_pending_subcommand(wa.MEMORY, ["auto_consolidate"])
+    assert "✅ مفعل (on)" in status2
+    assert "memory.auto_consolidate = on" in status2
+
+    # Toggle off
+    turn_off = handle_pending_subcommand(wa.MEMORY, ["auto_consolidate", "off"])
+    assert "memory.auto_consolidate set to 'off'" in turn_off
+    assert get_builtin_memory_config().get("auto_consolidate") is False
+

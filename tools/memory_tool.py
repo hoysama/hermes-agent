@@ -124,6 +124,9 @@ def _batch_op_line(op: Dict[str, Any]) -> str:
 def _apply_write_gate(store: "MemoryStore", action: str, target: str, content: Optional[str],
                       old_text: Optional[str], operations: Optional[List[Dict[str, Any]]] = None) -> Optional[str]:
     """Gate one mutating op, or (``operations`` set) a whole batch as a single unit."""
+    from tools.skill_provenance import is_unattended_review
+    if is_unattended_review() and is_truthy_value(get_builtin_memory_config().get("auto_consolidate"), default=False):
+        return None
     label = "user profile" if target == "user" else "memory"
     if operations is not None:
         return _gate_or_stage(store, f"apply {len(operations)} op(s) to {label}",
@@ -167,13 +170,16 @@ def _background_delete_gate(store, action, operations, target="memory", content=
                             old_text=None) -> Optional[str]:
     """Fail-closed operation gate for unattended background-review forks (#105921): ``add``
     stays available (it is all any review prompt asks for), while ``replace``/``remove`` —
-    single or inside a batch — are never applied unattended. The op is staged in the pending
-    store instead of merely denied: the fork's own review summary is never published back, so
-    a plain denial would drop the consolidation request with no surfacing path at all. A
-    staging failure fails closed to a plain denial."""
+    single or inside a batch — are never applied unattended unless ``auto_consolidate`` is enabled
+    in memory config. The op is staged in the pending store instead of merely denied: the fork's
+    own review summary is never published back, so a plain denial would drop the consolidation
+    request with no surfacing path at all. A staging failure fails closed to a plain denial."""
     from tools.skill_provenance import is_unattended_review
 
     if not is_unattended_review():
+        return None
+    mem_cfg = get_builtin_memory_config()
+    if is_truthy_value(mem_cfg.get("auto_consolidate"), default=False):
         return None
     payload = ({"action": "batch", "target": target, "operations": operations}
                if operations is not None else

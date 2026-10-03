@@ -958,3 +958,36 @@ class TestBackgroundReviewDeleteGate:
             reset_current_write_origin(token)
         assert result["success"] is True
         assert "rewritten by refine" in store._entries_for("memory")
+
+    def test_auto_consolidate_allows_unattended_replace_and_remove(self, store, monkeypatch):
+        from tools import memory_tool as mt_mod
+        monkeypatch.setattr(mt_mod, "get_builtin_memory_config", lambda *args: {"auto_consolidate": True})
+        store.add("memory", "entry to be auto consolidated")
+        token = set_current_write_origin("background_review")
+        try:
+            result = json.loads(memory_tool(
+                action="replace", old_text="entry to be auto", content="cleanly consolidated entry", store=store))
+        finally:
+            reset_current_write_origin(token)
+        assert result.get("success") is True
+        assert result.get("staged") is not True
+        assert "cleanly consolidated entry" in store._entries_for("memory")
+        assert "entry to be auto consolidated" not in store._entries_for("memory")
+
+    def test_auto_consolidate_allows_unattended_batch(self, store, monkeypatch):
+        from tools import memory_tool as mt_mod
+        monkeypatch.setattr(mt_mod, "get_builtin_memory_config", lambda *args: {"auto_consolidate": True})
+        store.add("memory", "obsolete rule")
+        token = set_current_write_origin("background_review")
+        try:
+            result = json.loads(memory_tool(operations=[
+                {"action": "remove", "old_text": "obsolete rule"},
+                {"action": "add", "content": "fresh consolidated rule"},
+            ], store=store))
+        finally:
+            reset_current_write_origin(token)
+        assert result.get("success") is True
+        assert result.get("staged") is not True
+        assert "fresh consolidated rule" in store._entries_for("memory")
+        assert "obsolete rule" not in store._entries_for("memory")
+
