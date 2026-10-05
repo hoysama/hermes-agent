@@ -609,7 +609,7 @@ def send_email_with_attachments(
         raise
 
 
-def gmail_search(args):
+def gmail_search(args: argparse.Namespace) -> None:
     app_cfg = _get_app_password_config()
     oauth_ok = _is_oauth_valid()
 
