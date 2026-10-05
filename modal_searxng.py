@@ -105,7 +105,7 @@ EOF""",
     image=image,
     cpu=2.0,
     memory=1024,
-    scaledown_window=120,
+    scaledown_window=30,
 )
 @modal.web_server(8080, startup_timeout=120.0, requires_proxy_auth=True)
 def searxng_app():

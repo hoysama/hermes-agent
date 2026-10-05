@@ -47,7 +47,7 @@ def _get_engine():
     memory=6144,  # 6GB RAM ensures zero OOM risk during CPU inference
     timeout=60,
     min_containers=0,
-    scaledown_window=120,
+    scaledown_window=30,
 )
 @modal.fastapi_endpoint(method="POST", requires_proxy_auth=True)
 async def decide(data: dict) -> Dict[str, Any]:

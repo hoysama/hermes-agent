@@ -65,7 +65,7 @@ def _get_model(model_name: str = DEFAULT_MODEL):
     image=image,
     gpu="any",
     timeout=300,
-    scaledown_window=120,
+    scaledown_window=30,
 )
 @modal.fastapi_endpoint(method="POST", requires_proxy_auth=True)
 def transcribe(data: dict):

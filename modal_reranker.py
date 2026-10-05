@@ -34,7 +34,7 @@ def _get_model(model_name: str = "BAAI/bge-reranker-base"):
     image=rerank_image,
     timeout=60,
     min_containers=0,
-    scaledown_window=120,
+    scaledown_window=30,
 )
 @modal.fastapi_endpoint(method="POST", requires_proxy_auth=True)
 async def rerank(data: dict):
