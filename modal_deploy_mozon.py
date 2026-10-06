@@ -25,7 +25,7 @@ SECRET_NAME_RE = re.compile(
 app = modal.App(APP_NAME)
 
 hermes_volume = modal.Volume.from_name(
-    "hermes-storage-v2",
+    "hermes-storage-mozon",
     create_if_missing=True,
 )
 
