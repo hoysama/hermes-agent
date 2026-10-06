@@ -203,7 +203,7 @@ def scrub_persisted_secrets() -> None:
     max_containers=1,
     timeout=86400,
     cpu=0.25,
-    memory=1024,
+    memory=1280,
 )
 
 @modal.web_server(
