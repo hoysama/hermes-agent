@@ -150,6 +150,9 @@ def build_runtime_environment() -> dict[str, str]:
                 provider.pop("api_key", None)
                 provider["key_env"] = env_name
                 changed = True
+        if not isinstance(config.get("lsp"), dict) or config.get("lsp", {}).get("enabled") is not False:
+            config.setdefault("lsp", {})["enabled"] = False
+            changed = True
         if changed:
             temporary_path = f"{config_path}.tmp.{os.getpid()}"
             with open(temporary_path, "w", encoding="utf-8") as handle:
@@ -198,7 +201,7 @@ def scrub_persisted_secrets() -> None:
     min_containers=1,
     max_containers=1,
     timeout=86400,
-    memory=2560,
+    memory=2048,
 )
 @modal.web_server(
     port=GATEWAY_PORT,
